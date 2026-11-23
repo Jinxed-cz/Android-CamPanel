@@ -1,0 +1,6 @@
+{
+  "name": "CamPanel",
+  "description": "Přehledový dashboard na šířku se 4 ONVIF/RTSP kamerami, 3denní předpovědí počasí Aladin, hodinami a automatickým návratem při nečinnosti.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
