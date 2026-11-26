@@ -9,6 +9,28 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
+enum class Go2RtcBridgeSourceType(val id: String) {
+  ESEECLOUD("eseecloud"),
+  TUYA_SMARTLIFE("tuya_smartlife"),
+}
+
+enum class TuyaRegion(
+  val id: String,
+  val shortLabel: String,
+  val appHost: String,
+  val openApiHost: String,
+) {
+  EU("eu", "EU", "protect-eu.ismartlife.me", "openapi.tuyaeu.com"),
+  US("us", "US", "protect-us.ismartlife.me", "openapi.tuyaus.com"),
+  CN("cn", "CN", "protect-cn.ismartlife.me", "openapi.tuyacn.com"),
+  IN("in", "IN", "protect-in.ismartlife.me", "openapi.tuyain.com"),
+}
+
+enum class TuyaAuthMode(val id: String) {
+  CLOUD_OPENAPI("openapi"),
+  APP_ACCOUNT("app"),
+}
+
 data class Go2RtcStreamInfo(
   val name: String,
   val rtspUrl: String,
@@ -93,15 +115,7 @@ class Go2RtcClient {
         val targetChannels =
           channelsZeroBased.map { it.coerceIn(0, 7) }.distinct().take(4).ifEmpty { listOf(0, 1, 2, 3) }
 
-        // Verify go2rtc API is alive first
-        val pingReq = Request.Builder().url("http://$cleanGoHost:$apiPort/api/streams").get().build()
-        runCatching {
-          client.newCall(pingReq).execute().use { resp ->
-            if (!resp.isSuccessful) error("HTTP ${resp.code}")
-          }
-        }.onFailure {
-          error("go2rtc na $cleanGoHost:$apiPort není spuštěné. Spusťte ho v Termuxu zkopírovaným příkazem a zkuste znovu.")
-        }
+        verifyGo2RtcAlive(cleanGoHost, apiPort)
 
         val registered = mutableListOf<Go2RtcStreamInfo>()
         for (ch in targetChannels) {
@@ -115,19 +129,7 @@ class Go2RtcClient {
               channelZeroBased = ch,
               streamQualityIndex = streamQualityIndex,
             )
-          val encodedName = URLEncoder.encode(streamName, "UTF-8")
-          val encodedSrc = URLEncoder.encode(bubbleSrc, "UTF-8")
-          val putUrl = "http://$cleanGoHost:$apiPort/api/streams?name=$encodedName&src=$encodedSrc"
-          val putReq =
-            Request.Builder()
-              .url(putUrl)
-              .put("".toRequestBody(null))
-              .build()
-          client.newCall(putReq).execute().use { resp ->
-            if (!resp.isSuccessful) {
-              error("Nepodařilo se zaregistrovat $streamName do go2rtc (HTTP ${resp.code}).")
-            }
-          }
+          putStreamToGo2Rtc(cleanGoHost, apiPort, streamName, bubbleSrc)
           registered.add(
             Go2RtcStreamInfo(
               name = streamName,
@@ -144,6 +146,100 @@ class Go2RtcClient {
         )
       }
     }
+
+  /**
+   * Registers a Tuya / SmartLife `tuya://` camera stream into a running `go2rtc` instance
+   * (requires go2rtc v1.9.13+) and returns its local RTSP URL.
+   */
+  suspend fun registerTuyaStream(
+    go2RtcHost: String = "127.0.0.1",
+    apiPort: Int = 1984,
+    rtspPort: Int = 8554,
+    streamName: String = "smartlife_1",
+    region: TuyaRegion = TuyaRegion.EU,
+    authMode: TuyaAuthMode = TuyaAuthMode.CLOUD_OPENAPI,
+    deviceId: String,
+    email: String = "",
+    password: String = "",
+    uid: String = "",
+    clientId: String = "",
+    clientSecret: String = "",
+    useSubStream: Boolean = true,
+  ): Result<Go2RtcSyncResult> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val cleanGoHost = go2RtcHost.trim().ifBlank { "127.0.0.1" }
+        val cleanName = sanitizeStreamName(streamName)
+        val cleanDeviceId = deviceId.trim()
+        require(cleanDeviceId.isNotBlank()) { "Zadejte Device ID (Virtuální ID) kamery." }
+
+        if (authMode == TuyaAuthMode.CLOUD_OPENAPI) {
+          require(uid.isNotBlank() && clientId.isNotBlank() && clientSecret.isNotBlank()) {
+            "Zadejte UID, Client ID a Client Secret z Tuya IoT Platform."
+          }
+        } else {
+          require(email.isNotBlank() && password.isNotBlank()) {
+            "Zadejte e-mail a heslo účtu Tuya Smart."
+          }
+        }
+
+        verifyGo2RtcAlive(cleanGoHost, apiPort)
+
+        val tuyaSrc =
+          buildTuyaSourceUrl(
+            region = region,
+            authMode = authMode,
+            deviceId = cleanDeviceId,
+            email = email,
+            password = password,
+            uid = uid,
+            clientId = clientId,
+            clientSecret = clientSecret,
+            useSubStream = useSubStream,
+          )
+        putStreamToGo2Rtc(cleanGoHost, apiPort, cleanName, tuyaSrc)
+
+        val stream =
+          Go2RtcStreamInfo(
+            name = cleanName,
+            rtspUrl = "rtsp://$cleanGoHost:$rtspPort/$cleanName",
+            sourcesSummary =
+              tuyaSrc
+                .replace(Regex("(password|client_secret)=([^&]+)"), "$1=***"),
+          )
+        Go2RtcSyncResult(
+          streams = listOf(stream),
+          statusMessage = "Kamera Tuya / SmartLife ($cleanName) připojena přes go2rtc ($cleanGoHost:$rtspPort).",
+        )
+      }
+    }
+
+  private fun verifyGo2RtcAlive(host: String, apiPort: Int) {
+    val pingReq = Request.Builder().url("http://$host:$apiPort/api/streams").get().build()
+    runCatching {
+      client.newCall(pingReq).execute().use { resp ->
+        if (!resp.isSuccessful) error("HTTP ${resp.code}")
+      }
+    }.onFailure {
+      error("go2rtc na $host:$apiPort není spuštěné. Spusťte ho v Termuxu zkopírovaným příkazem a zkuste znovu.")
+    }
+  }
+
+  private fun putStreamToGo2Rtc(host: String, apiPort: Int, streamName: String, sourceUrl: String) {
+    val encodedName = URLEncoder.encode(streamName, "UTF-8")
+    val encodedSrc = URLEncoder.encode(sourceUrl, "UTF-8")
+    val putUrl = "http://$host:$apiPort/api/streams?name=$encodedName&src=$encodedSrc"
+    val putReq =
+      Request.Builder()
+        .url(putUrl)
+        .put("".toRequestBody(null))
+        .build()
+    client.newCall(putReq).execute().use { resp ->
+      if (!resp.isSuccessful) {
+        error("Nepodařilo se zaregistrovat $streamName do go2rtc (HTTP ${resp.code}).")
+      }
+    }
+  }
 
   suspend fun registerJooanBubbleStreams(
     go2RtcHost: String = "127.0.0.1",
@@ -169,6 +265,16 @@ class Go2RtcClient {
     )
 
   companion object {
+    fun sanitizeStreamName(raw: String): String =
+      raw.trim()
+        .lowercase()
+        .replace(Regex("[^a-z0-9_-]"), "_")
+        .trim('_')
+        .ifBlank { "smartlife_1" }
+
+    private fun urlParam(value: String): String =
+      URLEncoder.encode(value.trim(), "UTF-8").replace("+", "%20")
+
     fun parseStreamsJson(
       jsonText: String,
       host: String,
@@ -207,7 +313,7 @@ class Go2RtcClient {
       streamQualityIndex: Int,
     ): String {
       val cleanIp = nvrIp.trim().ifBlank { "192.168.1.50" }
-      val u = URLEncoder.encode(username.trim().ifBlank { "admin" }, "UTF-8").replace("+", "%20")
+      val u = urlParam(username.trim().ifBlank { "admin" })
       val auth =
         if (password.isBlank()) {
           u
@@ -216,6 +322,34 @@ class Go2RtcClient {
           "$u:$p"
         }
       return "bubble://$auth@$cleanIp:$nvrPort/bubble/live?ch=$channelZeroBased&stream=$streamQualityIndex"
+    }
+
+    fun buildTuyaSourceUrl(
+      region: TuyaRegion = TuyaRegion.EU,
+      authMode: TuyaAuthMode = TuyaAuthMode.CLOUD_OPENAPI,
+      deviceId: String,
+      email: String = "",
+      password: String = "",
+      uid: String = "",
+      clientId: String = "",
+      clientSecret: String = "",
+      useSubStream: Boolean = true,
+    ): String {
+      val cleanDeviceId = deviceId.trim().ifBlank { "YOUR_DEVICE_ID" }
+      val resSuffix = if (useSubStream) "&resolution=sd" else ""
+      return when (authMode) {
+        TuyaAuthMode.CLOUD_OPENAPI -> {
+          val cleanUid = uid.trim().ifBlank { "YOUR_UID" }
+          val cleanClientId = clientId.trim().ifBlank { "YOUR_CLIENT_ID" }
+          val cleanSecret = clientSecret.trim().ifBlank { "YOUR_CLIENT_SECRET" }
+          "tuya://${region.openApiHost}?device_id=${urlParam(cleanDeviceId)}&uid=${urlParam(cleanUid)}&client_id=${urlParam(cleanClientId)}&client_secret=${urlParam(cleanSecret)}$resSuffix"
+        }
+        TuyaAuthMode.APP_ACCOUNT -> {
+          val cleanEmail = email.trim().ifBlank { "user@example.com" }
+          val cleanPass = password.ifBlank { "YOUR_PASSWORD" }
+          "tuya://${region.appHost}?device_id=${urlParam(cleanDeviceId)}&email=${urlParam(cleanEmail)}&password=${urlParam(cleanPass)}$resSuffix"
+        }
+      }
     }
 
     fun buildEseeCloudGo2RtcYaml(
@@ -249,6 +383,43 @@ class Go2RtcClient {
         sb.appendLine("  kam${ch + 1}: $src")
       }
       return sb.toString().trimEnd()
+    }
+
+    fun buildTuyaGo2RtcYaml(
+      streamName: String = "smartlife_1",
+      region: TuyaRegion = TuyaRegion.EU,
+      authMode: TuyaAuthMode = TuyaAuthMode.CLOUD_OPENAPI,
+      deviceId: String,
+      email: String = "",
+      password: String = "",
+      uid: String = "",
+      clientId: String = "",
+      clientSecret: String = "",
+      useSubStream: Boolean = true,
+      apiPort: Int = 1984,
+      rtspPort: Int = 8554,
+    ): String {
+      val cleanName = sanitizeStreamName(streamName)
+      val src =
+        buildTuyaSourceUrl(
+          region = region,
+          authMode = authMode,
+          deviceId = deviceId,
+          email = email,
+          password = password,
+          uid = uid,
+          clientId = clientId,
+          clientSecret = clientSecret,
+          useSubStream = useSubStream,
+        )
+      return buildString {
+        appendLine("api:")
+        appendLine("  listen: \":$apiPort\"")
+        appendLine("rtsp:")
+        appendLine("  listen: \":$rtspPort\"")
+        appendLine("streams:")
+        append("  $cleanName: $src")
+      }
     }
 
     fun buildJooanGo2RtcYaml(

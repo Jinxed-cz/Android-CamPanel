@@ -219,8 +219,8 @@ private fun MetricLegendRow(toggles: WeatherMetricToggle, modifier: Modifier = M
     verticalAlignment = Alignment.CenterVertically,
   ) {
     if (toggles.showTemperature) LegendDot("°C", weatherPalette.tempWarm)
-    if (toggles.showRain) LegendDot(tr(lang, "Déšť", "Rain"), weatherPalette.rainBar)
-    if (toggles.showSnow) LegendDot(tr(lang, "Sníh", "Snow"), weatherPalette.snowBar)
+    if (toggles.showRain) LegendDot(tr(lang, "Déšť", "Rain"), Color(0xFF38BDF8))
+    if (toggles.showSnow) LegendDot(tr(lang, "Sníh", "Snow"), Color.White)
     if (toggles.showPressure) LegendDot("hPa", weatherPalette.pressureLine)
   }
 }
@@ -238,29 +238,35 @@ private fun LegendDot(label: String, color: Color) {
 
 @Composable
 private fun ForecastBody(data: AladinForecastData, toggles: WeatherMetricToggle) {
-  Column(modifier = Modifier.fillMaxSize()) {
-    // 3-Day Summary Columns
-    Row(
-      modifier = Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-      data.daySummaries.forEach { summary ->
-        DaySummaryStrip(
-          summary = summary,
-          toggles = toggles,
-          modifier = Modifier.weight(1f),
-        )
+  BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    val isVeryCompactHeight = maxHeight < 185.dp
+    val sectionGap = if (isVeryCompactHeight) 3.dp else 5.dp
+
+    Column(modifier = Modifier.fillMaxSize()) {
+      // 3-Day Summary Columns
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        data.daySummaries.forEach { summary ->
+          DaySummaryStrip(
+            summary = summary,
+            toggles = toggles,
+            compact = isVeryCompactHeight,
+            modifier = Modifier.weight(1f),
+          )
+        }
       }
+
+      Spacer(Modifier.height(sectionGap))
+
+      // 72-hour Meteogram Chart
+      AladinMeteogramCanvas(
+        points = data.hourlyPoints,
+        toggles = toggles,
+        modifier = Modifier.fillMaxWidth().weight(1f),
+      )
     }
-
-    Spacer(Modifier.height(5.dp))
-
-    // 72-hour Meteogram Chart
-    AladinMeteogramCanvas(
-      points = data.hourlyPoints,
-      toggles = toggles,
-      modifier = Modifier.fillMaxWidth().weight(1f),
-    )
   }
 }
 
@@ -302,6 +308,7 @@ private fun fitSingleLineFontSizeSp(
 private fun DaySummaryStrip(
   summary: AladinDaySummary,
   toggles: WeatherMetricToggle,
+  compact: Boolean = false,
   modifier: Modifier = Modifier,
 ) {
   val dashPalette = LocalDashPalette.current
@@ -311,8 +318,8 @@ private fun DaySummaryStrip(
   val textMeasurer = rememberTextMeasurer()
   val titleStyle =
     MaterialTheme.typography.titleMedium.copy(
-      fontSize = 13.5.sp,
-      lineHeight = 15.sp,
+      fontSize = if (compact) 12.sp else 13.5.sp,
+      lineHeight = if (compact) 13.sp else 15.sp,
       fontWeight = FontWeight.Bold,
     )
   val baseDateStyle =
@@ -331,7 +338,7 @@ private fun DaySummaryStrip(
       modifier
         .clip(RoundedCornerShape(7.dp))
         .background(dashPalette.surfaceElevated.copy(alpha = 0.72f))
-        .padding(horizontal = 6.dp, vertical = 4.dp)
+        .padding(horizontal = 6.dp, vertical = if (compact) 2.5.dp else 4.dp)
   ) {
     val innerWidthPx = constraints.maxWidth.toFloat()
     val iconAndGapPx = with(density) { (18.dp + 4.dp).toPx() }
@@ -551,6 +558,39 @@ private fun buildTemperatureCurveBrush(
     }
   }
 
+internal data class PrecipGridSpec(
+  val maxValue: Double,
+  val midValue: Double,
+  val unitLabel: String,
+)
+
+internal fun computePrecipGrid(
+  points: List<AladinHourPoint>,
+  showRain: Boolean,
+  showSnow: Boolean,
+): PrecipGridSpec {
+  val maxRain = if (showRain) points.maxOfOrNull { it.rainMm } ?: 0.0 else 0.0
+  val maxSnow = if (showSnow) points.maxOfOrNull { it.snowCm } ?: 0.0 else 0.0
+  val rawPeak = maxOf(maxRain, maxSnow)
+  val candidates = listOf(2.0, 4.0, 6.0, 10.0, 15.0, 20.0, 30.0, 50.0)
+  val maxValue = candidates.firstOrNull { rawPeak <= it } ?: ceil(rawPeak / 10.0) * 10.0
+  val unitLabel = if (showSnow && !showRain) "cm" else "mm"
+  return PrecipGridSpec(
+    maxValue = maxValue,
+    midValue = maxValue / 2.0,
+    unitLabel = unitLabel,
+  )
+}
+
+private fun formatPrecipTick(value: Double, unit: String): String {
+  val roundedInt = value.roundToInt()
+  return if (kotlin.math.abs(value - roundedInt) < 0.05) {
+    "$roundedInt$unit"
+  } else {
+    String.format(Locale.US, "%.1f%s", value, unit)
+  }
+}
+
 @Composable
 private fun AladinMeteogramCanvas(
   points: List<AladinHourPoint>,
@@ -564,7 +604,15 @@ private fun AladinMeteogramCanvas(
   val minTemp = points.minOf { it.temperatureC }
   val maxTemp = points.maxOf { it.temperatureC }
   val tempGrid = computeTemperatureGrid(minTemp, maxTemp)
+  val showPrecipAxis = toggles.showRain || toggles.showSnow
+  val precipGrid = computePrecipGrid(points, toggles.showRain, toggles.showSnow)
   val textMeasurer = rememberTextMeasurer()
+
+  // Distinct high-visibility rain blue & pure white snow colors
+  val rainTopColor = Color(0xFF38BDF8)
+  val rainBottomColor = Color(0xFF1D4ED8)
+  val snowBrightColor = Color.White
+  val snowBottomColor = Color(0xFFDCEEFF)
 
   Box(
     modifier =
@@ -578,10 +626,11 @@ private fun AladinMeteogramCanvas(
       if (n < 2) return@Canvas
 
       val leftGutterPx = if (toggles.showTemperature) 31.dp.toPx() else 0f
+      val rightGutterPx = if (showPrecipAxis) 31.dp.toPx() else 0f
       val topPad = 6.dp.toPx()
       val bottomPad = 5.dp.toPx()
       val chartLeft = leftGutterPx
-      val chartRight = size.width
+      val chartRight = (size.width - rightGutterPx).coerceAtLeast(chartLeft + 10f)
       val chartWidth = (chartRight - chartLeft).coerceAtLeast(1f)
       val chartTop = topPad
       val chartBottom = (size.height - bottomPad).coerceAtLeast(chartTop + 1f)
@@ -594,12 +643,18 @@ private fun AladinMeteogramCanvas(
         return chartBottom - norm * chartHeight
       }
 
+      val precipMaxHeight = chartHeight * 0.72f
+      fun precipToY(amount: Double): Float {
+        val norm = (amount / precipGrid.maxValue).toFloat().coerceIn(0f, 1f)
+        return chartBottom - norm * precipMaxHeight
+      }
+
       // Freeze (< 0°C) & Hot (>= +30°C) subtle background bands + degree horizontal gridlines
       if (toggles.showTemperature) {
         if (tempGrid.axisMinC < 0.0 && tempGrid.axisMaxC >= 0.0) {
           val yZero = tempToY(0.0)
           drawRect(
-            color = weatherPalette.tempColdBottom.copy(alpha = 0.08f),
+            color = weatherPalette.tempColdBottom.copy(alpha = 0.09f),
             topLeft = Offset(chartLeft, yZero),
             size = Size(chartWidth, (chartBottom - yZero).coerceAtLeast(0f)),
           )
@@ -607,7 +662,7 @@ private fun AladinMeteogramCanvas(
         if (tempGrid.axisMaxC > 30.0 && tempGrid.axisMinC <= 30.0) {
           val yThirty = tempToY(30.0)
           drawRect(
-            color = weatherPalette.tempHot.copy(alpha = 0.08f),
+            color = weatherPalette.tempHot.copy(alpha = 0.09f),
             topLeft = Offset(chartLeft, chartTop),
             size = Size(chartWidth, (yThirty - chartTop).coerceAtLeast(0f)),
           )
@@ -620,15 +675,15 @@ private fun AladinMeteogramCanvas(
           val isHot = deg >= 30
           val lineColor =
             when {
-              isZero -> weatherPalette.tempColdBottom.copy(alpha = 0.72f)
-              isHot -> weatherPalette.tempHot.copy(alpha = 0.68f)
+              isZero -> weatherPalette.tempColdBottom.copy(alpha = 0.80f)
+              isHot -> weatherPalette.tempHot.copy(alpha = 0.75f)
               else -> Color(0xFF1E2D47)
             }
           val labelColor =
             when {
               isZero -> weatherPalette.tempColdBottom
               isHot -> weatherPalette.tempHot
-              deg < 0 -> weatherPalette.tempColdBottom.copy(alpha = 0.85f)
+              deg < 0 -> weatherPalette.tempColdBottom.copy(alpha = 0.90f)
               else -> DashTextSecondary
             }
 
@@ -636,7 +691,7 @@ private fun AladinMeteogramCanvas(
             color = lineColor,
             start = Offset(chartLeft, y),
             end = Offset(chartRight, y),
-            strokeWidth = if (isZero || isHot) 1.6f else 1f,
+            strokeWidth = if (isZero || isHot) 1.5.dp.toPx() else 1f,
             pathEffect = if (isZero || isHot) null else gridDash,
           )
 
@@ -670,6 +725,38 @@ private fun AladinMeteogramCanvas(
         )
       }
 
+      // Right-hand precipitation intensity reference ticks (mid & top)
+      if (showPrecipAxis) {
+        val precipTickColor = if (toggles.showRain) rainTopColor else snowBrightColor
+        val precipTicks = listOf(precipGrid.midValue, precipGrid.maxValue)
+        precipTicks.forEach { tickVal ->
+          val y = precipToY(tickVal)
+          drawLine(
+            color = precipTickColor.copy(alpha = 0.22f),
+            start = Offset(chartLeft, y),
+            end = Offset(chartRight, y),
+            strokeWidth = 1f,
+            pathEffect = PathEffect.dashPathEffect(floatArrayOf(3f, 6f), 0f),
+          )
+          val tickLabel = formatPrecipTick(tickVal, precipGrid.unitLabel)
+          val textLayout =
+            textMeasurer.measure(
+              text = tickLabel,
+              style =
+                TextStyle(
+                  fontFamily = JetBrainsMonoFamily,
+                  fontSize = 8.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = precipTickColor.copy(alpha = 0.88f),
+                ),
+            )
+          val textX = (chartRight + 4.dp.toPx()).coerceAtMost((size.width - textLayout.size.width).coerceAtLeast(0f))
+          val textY =
+            (y - textLayout.size.height / 2f).coerceIn(0f, (size.height - textLayout.size.height).coerceAtLeast(0f))
+          drawText(textLayout, topLeft = Offset(textX, textY))
+        }
+      }
+
       // Day separator lines at 1/3 and 2/3 of the chart plot area
       val sepColor = Color(0xFF23324D)
       drawLine(
@@ -686,39 +773,222 @@ private fun AladinMeteogramCanvas(
       )
 
       val stepX = chartWidth / (n - 1).coerceAtLeast(1)
-      val barWidth = (chartWidth / n) * 0.65f
+      val slotWidth = (chartWidth / n).coerceAtLeast(3.dp.toPx())
+      val minBarHeightPx = 4.dp.toPx()
 
-      // 1. Rain bars (bottom-aligned)
+      // 1. Rain area + vivid blue bars (bottom-aligned)
       if (toggles.showRain) {
-        val maxRain = (points.maxOf { it.rainMm }).coerceAtLeast(3.0)
+        val rainAreaPath = Path().apply { moveTo(chartLeft, chartBottom) }
+        val rainLinePath = Path()
+        var hasAnyRain = false
+        var peakRainIdx = -1
+        var peakRainVal = 0.0
+
         points.forEachIndexed { idx, pt ->
-          if (pt.rainMm > 0.01) {
-            val barH = ((pt.rainMm / maxRain) * (chartHeight * 0.55f)).toFloat().coerceAtLeast(2f)
-            val x = chartLeft + idx * stepX - barWidth / 2f
+          val x = (chartLeft + idx * stepX).coerceIn(chartLeft, chartRight)
+          val y =
+            if (pt.rainMm >= 0.05) {
+              hasAnyRain = true
+              if (pt.rainMm > peakRainVal) {
+                peakRainVal = pt.rainMm
+                peakRainIdx = idx
+              }
+              precipToY(pt.rainMm).coerceAtMost(chartBottom - minBarHeightPx)
+            } else {
+              chartBottom
+            }
+          rainAreaPath.lineTo(x, y)
+          if (idx == 0) rainLinePath.moveTo(x, y) else rainLinePath.lineTo(x, y)
+        }
+        rainAreaPath.lineTo(chartRight, chartBottom)
+        rainAreaPath.close()
+
+        if (hasAnyRain) {
+          drawPath(
+            path = rainAreaPath,
+            brush =
+              Brush.verticalGradient(
+                colors = listOf(rainTopColor.copy(alpha = 0.34f), rainBottomColor.copy(alpha = 0.08f)),
+                startY = chartBottom - precipMaxHeight,
+                endY = chartBottom,
+              ),
+          )
+          drawPath(
+            path = rainLinePath,
+            color = rainTopColor.copy(alpha = 0.85f),
+            style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
+          )
+        }
+
+        points.forEachIndexed { idx, pt ->
+          if (pt.rainMm >= 0.05) {
+            val hasCoincidentSnow = toggles.showSnow && pt.snowCm >= 0.05
+            val barW =
+              if (hasCoincidentSnow) (slotWidth * 0.45f).coerceAtLeast(2.2.dp.toPx())
+              else (slotWidth * 0.82f).coerceAtLeast(2.8.dp.toPx())
+            val centerX = chartLeft + idx * stepX
+            val leftX =
+              if (hasCoincidentSnow) (centerX - barW).coerceIn(chartLeft, (chartRight - barW).coerceAtLeast(chartLeft))
+              else (centerX - barW / 2f).coerceIn(chartLeft, (chartRight - barW).coerceAtLeast(chartLeft))
+            val barTop = precipToY(pt.rainMm).coerceAtMost(chartBottom - minBarHeightPx)
+            val barH = (chartBottom - barTop).coerceAtLeast(minBarHeightPx)
+
             drawRoundRect(
-              color = weatherPalette.rainBar.copy(alpha = 0.65f),
-              topLeft = Offset(x.coerceAtLeast(chartLeft), chartBottom - barH),
-              size = Size(barWidth, barH),
-              cornerRadius = CornerRadius(2f, 2f),
+              brush =
+                Brush.verticalGradient(
+                  colors = listOf(rainTopColor, rainBottomColor),
+                  startY = barTop,
+                  endY = chartBottom,
+                ),
+              topLeft = Offset(leftX, barTop),
+              size = Size(barW, barH),
+              cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()),
+            )
+            // Bright top edge for instant bar readability
+            drawLine(
+              color = Color(0xFFBAE6FD),
+              start = Offset(leftX, barTop),
+              end = Offset(leftX + barW, barTop),
+              strokeWidth = 1.3.dp.toPx(),
             )
           }
         }
+
+        if (peakRainIdx >= 0 && peakRainVal >= 0.2) {
+          val label = String.format(Locale.US, "%.1fmm", peakRainVal)
+          val textLayout =
+            textMeasurer.measure(
+              text = label,
+              style =
+                TextStyle(
+                  fontFamily = JetBrainsMonoFamily,
+                  fontSize = 8.5.sp,
+                  fontWeight = FontWeight.Bold,
+                  color = Color(0xFFE0F2FE),
+                ),
+            )
+          val peakY = precipToY(peakRainVal).coerceAtMost(chartBottom - minBarHeightPx)
+          val badgeW = textLayout.size.width + 6.dp.toPx()
+          val badgeH = textLayout.size.height + 2.dp.toPx()
+          val badgeX =
+            (chartLeft + peakRainIdx * stepX - badgeW / 2f)
+              .coerceIn(chartLeft + 2.dp.toPx(), (chartRight - badgeW - 2.dp.toPx()).coerceAtLeast(chartLeft))
+          val badgeY = (peakY - badgeH - 3.dp.toPx()).coerceAtLeast(chartTop)
+          drawRoundRect(
+            color = Color(0xFF0C4A6E).copy(alpha = 0.88f),
+            topLeft = Offset(badgeX, badgeY),
+            size = Size(badgeW, badgeH),
+            cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx()),
+          )
+          drawText(textLayout, topLeft = Offset(badgeX + 3.dp.toPx(), badgeY + 1.dp.toPx()))
+        }
       }
 
-      // 2. Snow bars (bottom-aligned, bright ice)
+      // 2. Snow area + crisp pure-white bars (bottom-aligned, side-by-side when overlapping rain)
       if (toggles.showSnow) {
-        val maxSnow = (points.maxOf { it.snowCm }).coerceAtLeast(2.0)
+        val snowAreaPath = Path().apply { moveTo(chartLeft, chartBottom) }
+        val snowLinePath = Path()
+        var hasAnySnow = false
+        var peakSnowIdx = -1
+        var peakSnowVal = 0.0
+
         points.forEachIndexed { idx, pt ->
-          if (pt.snowCm > 0.01) {
-            val barH = ((pt.snowCm / maxSnow) * (chartHeight * 0.55f)).toFloat().coerceAtLeast(2f)
-            val x = chartLeft + idx * stepX - barWidth / 2f
+          val x = (chartLeft + idx * stepX).coerceIn(chartLeft, chartRight)
+          val y =
+            if (pt.snowCm >= 0.05) {
+              hasAnySnow = true
+              if (pt.snowCm > peakSnowVal) {
+                peakSnowVal = pt.snowCm
+                peakSnowIdx = idx
+              }
+              precipToY(pt.snowCm).coerceAtMost(chartBottom - minBarHeightPx)
+            } else {
+              chartBottom
+            }
+          snowAreaPath.lineTo(x, y)
+          if (idx == 0) snowLinePath.moveTo(x, y) else snowLinePath.lineTo(x, y)
+        }
+        snowAreaPath.lineTo(chartRight, chartBottom)
+        snowAreaPath.close()
+
+        if (hasAnySnow) {
+          drawPath(
+            path = snowAreaPath,
+            brush =
+              Brush.verticalGradient(
+                colors = listOf(snowBrightColor.copy(alpha = 0.28f), snowBottomColor.copy(alpha = 0.06f)),
+                startY = chartBottom - precipMaxHeight,
+                endY = chartBottom,
+              ),
+          )
+          drawPath(
+            path = snowLinePath,
+            color = snowBrightColor.copy(alpha = 0.90f),
+            style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
+          )
+        }
+
+        points.forEachIndexed { idx, pt ->
+          if (pt.snowCm >= 0.05) {
+            val hasCoincidentRain = toggles.showRain && pt.rainMm >= 0.05
+            val barW =
+              if (hasCoincidentRain) (slotWidth * 0.45f).coerceAtLeast(2.2.dp.toPx())
+              else (slotWidth * 0.80f).coerceAtLeast(2.8.dp.toPx())
+            val centerX = chartLeft + idx * stepX
+            val leftX =
+              if (hasCoincidentRain) centerX.coerceIn(chartLeft, (chartRight - barW).coerceAtLeast(chartLeft))
+              else (centerX - barW / 2f).coerceIn(chartLeft, (chartRight - barW).coerceAtLeast(chartLeft))
+            val barTop = precipToY(pt.snowCm).coerceAtMost(chartBottom - minBarHeightPx)
+            val barH = (chartBottom - barTop).coerceAtLeast(minBarHeightPx)
+
             drawRoundRect(
-              color = weatherPalette.snowBar.copy(alpha = 0.85f),
-              topLeft = Offset(x.coerceAtLeast(chartLeft), chartBottom - barH),
-              size = Size(barWidth * 0.7f, barH),
-              cornerRadius = CornerRadius(2f, 2f),
+              brush =
+                Brush.verticalGradient(
+                  colors = listOf(snowBrightColor, snowBottomColor),
+                  startY = barTop,
+                  endY = chartBottom,
+                ),
+              topLeft = Offset(leftX, barTop),
+              size = Size(barW, barH),
+              cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()),
+            )
+            drawRoundRect(
+              color = Color.White,
+              topLeft = Offset(leftX, barTop),
+              size = Size(barW, barH),
+              cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()),
+              style = Stroke(width = 0.9.dp.toPx()),
             )
           }
+        }
+
+        if (peakSnowIdx >= 0 && peakSnowVal >= 0.2) {
+          val label = String.format(Locale.US, "%.1fcm", peakSnowVal)
+          val textLayout =
+            textMeasurer.measure(
+              text = label,
+              style =
+                TextStyle(
+                  fontFamily = JetBrainsMonoFamily,
+                  fontSize = 8.5.sp,
+                  fontWeight = FontWeight.Bold,
+                  color = Color(0xFF0F172A),
+                ),
+            )
+          val peakY = precipToY(peakSnowVal).coerceAtMost(chartBottom - minBarHeightPx)
+          val badgeW = textLayout.size.width + 6.dp.toPx()
+          val badgeH = textLayout.size.height + 2.dp.toPx()
+          val badgeX =
+            (chartLeft + peakSnowIdx * stepX - badgeW / 2f)
+              .coerceIn(chartLeft + 2.dp.toPx(), (chartRight - badgeW - 2.dp.toPx()).coerceAtLeast(chartLeft))
+          val badgeY = (peakY - badgeH - 3.dp.toPx()).coerceAtLeast(chartTop)
+          drawRoundRect(
+            color = Color.White.copy(alpha = 0.92f),
+            topLeft = Offset(badgeX, badgeY),
+            size = Size(badgeW, badgeH),
+            cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx()),
+          )
+          drawText(textLayout, topLeft = Offset(badgeX + 3.dp.toPx(), badgeY + 1.dp.toPx()))
         }
       }
 
@@ -738,13 +1008,13 @@ private fun AladinMeteogramCanvas(
           color = weatherPalette.pressureLine.copy(alpha = 0.85f),
           style =
             Stroke(
-              width = 2f,
+              width = 1.8.dp.toPx(),
               pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f), 0f),
             ),
         )
       }
 
-      // 4. Temperature smooth line mapped accurately onto the degree gridlines
+      // 4. Bold Temperature smooth line mapped accurately onto degree gridlines
       if (toggles.showTemperature) {
         val tPath = Path()
         val coords =
@@ -760,6 +1030,12 @@ private fun AladinMeteogramCanvas(
             tPath.cubicTo(midX, prev.y, midX, pt.y, pt.x, pt.y)
           }
         }
+        // Dark contrast casing so thick temperature line stays crisp over bright rain/snow bars
+        drawPath(
+          path = tPath,
+          color = Color.Black.copy(alpha = 0.62f),
+          style = Stroke(width = 5.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
         drawPath(
           path = tPath,
           brush =
@@ -771,20 +1047,20 @@ private fun AladinMeteogramCanvas(
               chartBottom = chartBottom,
               weatherPalette = weatherPalette,
             ),
-          style = Stroke(width = 3.2f, cap = StrokeCap.Round, join = StrokeJoin.Round),
+          style = Stroke(width = 3.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
         )
       }
     }
 
-    // Compact legend pill tucked cleanly in top-right corner of the meteogram
+    // Compact legend pill tucked cleanly in top-right corner inside the plot area
     if (toggles.showTemperature || toggles.showRain || toggles.showSnow || toggles.showPressure) {
       MetricLegendRow(
         toggles = toggles,
         modifier =
           Modifier.align(Alignment.TopEnd)
-            .padding(4.dp)
+            .padding(top = 4.dp, end = if (showPrecipAxis) 35.dp else 4.dp)
             .clip(RoundedCornerShape(5.dp))
-            .background(weatherPalette.chartBackground.copy(alpha = 0.78f))
+            .background(weatherPalette.chartBackground.copy(alpha = 0.82f))
             .padding(horizontal = 5.dp, vertical = 2.dp),
       )
     }

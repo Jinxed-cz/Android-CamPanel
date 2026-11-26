@@ -1,6 +1,8 @@
 package com.example.ui.components
 
+import android.graphics.drawable.Drawable
 import android.net.Uri
+import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.annotation.OptIn
 import androidx.compose.foundation.Canvas
@@ -31,6 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,7 +66,10 @@ import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
+import com.example.R
+import com.example.model.CameraRecordingRuntimeStatus
 import com.example.model.CameraSlot
+import com.example.model.RecordingMode
 import com.example.ui.theme.DashTextMuted
 import com.example.ui.theme.DashTextPrimary
 import com.example.ui.theme.DashTextSecondary
@@ -85,6 +91,9 @@ fun CameraTile(
   isFullscreen: Boolean,
   onClick: (() -> Unit)?,
   modifier: Modifier = Modifier,
+  isStreamActive: Boolean = true,
+  activeTileCount: Int = 4,
+  recordingStatus: CameraRecordingRuntimeStatus? = null,
 ) {
   val palette = LocalDashPalette.current
   val shape = if (isFullscreen) RoundedCornerShape(0.dp) else RoundedCornerShape(10.dp)
@@ -107,39 +116,40 @@ fun CameraTile(
         .testTag(if (isFullscreen) "fullscreen_camera_view" else "camera_tile_${slot.slotIndex}")
   ) {
     if (slot.isConfigured) {
-      val playbackUrl = remember(slot) { slot.effectivePlaybackUrl() }
-      val isHttpUrl =
-        playbackUrl.startsWith("http://", ignoreCase = true) ||
-          playbackUrl.startsWith("https://", ignoreCase = true)
-      val isHttpVideoStream =
-        isHttpUrl &&
-          (playbackUrl.contains("/livestream/", ignoreCase = true) ||
-            playbackUrl.contains(".m3u8", ignoreCase = true) ||
-            playbackUrl.contains(".ts", ignoreCase = true) ||
-            playbackUrl.contains(".mp4", ignoreCase = true))
-
-      if (isHttpUrl && !isHttpVideoStream) {
-        HttpSnapshotFeed(
-          url = playbackUrl,
-          username = slot.username,
-          password = slot.password,
-          modifier = Modifier.fillMaxSize(),
-        )
+      if (!isStreamActive) {
+        // Release network sockets & video decoders while fullscreen or settings overlay is open
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black))
       } else {
-        CameraVideoFeed(
-          streamUrl = playbackUrl,
-          username = slot.username,
-          password = slot.password,
-          isFullscreen = isFullscreen,
-          modifier = Modifier.fillMaxSize(),
-        )
+        val playbackUrl = remember(slot) { slot.effectivePlaybackUrl() }
+        val isHttpUrl =
+          playbackUrl.startsWith("http://", ignoreCase = true) ||
+            playbackUrl.startsWith("https://", ignoreCase = true)
+        val isHttpVideoStream = CameraSlot.isHttpVideoOrMjpegUrl(playbackUrl)
+
+        if (isHttpUrl && !isHttpVideoStream) {
+          HttpSnapshotFeed(
+            url = playbackUrl,
+            username = slot.username,
+            password = slot.password,
+            modifier = Modifier.fillMaxSize(),
+          )
+        } else {
+          CameraVideoFeed(
+            streamUrl = playbackUrl,
+            username = slot.username,
+            password = slot.password,
+            isFullscreen = isFullscreen,
+            activeTileCount = activeTileCount,
+            modifier = Modifier.fillMaxSize(),
+          )
+        }
       }
     } else {
       EmptyCameraPlaceholder(slot = slot, isFullscreen = isFullscreen)
     }
 
-    // Subtle top gradient scrim + camera badge
-    Box(
+    // Subtle top gradient scrim + camera badge + recording indicator
+    Row(
       modifier =
         Modifier.fillMaxWidth()
           .background(
@@ -148,11 +158,15 @@ fun CameraTile(
             )
           )
           .padding(horizontal = 8.dp, vertical = 6.dp)
-          .align(Alignment.TopCenter)
+          .align(Alignment.TopCenter),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.SpaceBetween,
     ) {
+      val lang = LocalAppLanguage.current
       Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.weight(1f),
       ) {
         Box(
           modifier =
@@ -167,7 +181,7 @@ fun CameraTile(
           fontWeight = FontWeight.Bold,
         )
         val displaySlotName =
-          if (slot.name.startsWith("Kamera ") && LocalAppLanguage.current == com.example.model.AppLanguage.EN) {
+          if (slot.name.startsWith("Kamera ") && lang == com.example.model.AppLanguage.EN) {
             slot.name.replaceFirst("Kamera ", "Camera ")
           } else {
             slot.name
@@ -181,6 +195,51 @@ fun CameraTile(
           overflow = TextOverflow.Ellipsis,
         )
       }
+
+      if (slot.isConfigured && slot.recordingEnabled) {
+        val isRec = recordingStatus?.isRecording == true
+        val isMotionMode = slot.recordingMode == RecordingMode.MOTION_EVENTS
+        val isArmed = recordingStatus?.isMotionArmed == true || isMotionMode
+        val badgeColor =
+          when {
+            isRec -> OfflineRed
+            isArmed -> Color(0xFFF59E0B)
+            else -> DashTextMuted
+          }
+        val badgeText =
+          when {
+            isRec && isMotionMode -> tr(lang, "POHYB REC", "MOTION REC")
+            isRec -> "REC ${slot.recordingQuality.id.uppercase()}"
+            isArmed -> tr(lang, "POHYB", "MOTION")
+            else -> "REC"
+          }
+        Row(
+          modifier =
+            Modifier.clip(RoundedCornerShape(6.dp))
+              .background(Color.Black.copy(alpha = 0.68f))
+              .border(1.dp, badgeColor.copy(alpha = 0.75f), RoundedCornerShape(6.dp))
+              .padding(horizontal = 6.dp, vertical = 2.dp)
+              .testTag("camera_rec_badge_${slot.slotIndex}"),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+          Box(
+            modifier =
+              Modifier.size(6.dp)
+                .clip(CircleShape)
+                .background(badgeColor)
+          )
+          Text(
+            text = badgeText,
+            style = MaterialTheme.typography.labelSmall,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+            maxLines = 1,
+            softWrap = false,
+          )
+        }
+      }
     }
   }
 }
@@ -191,25 +250,42 @@ private fun CameraVideoFeed(
   username: String,
   password: String,
   isFullscreen: Boolean,
+  activeTileCount: Int,
   modifier: Modifier = Modifier,
 ) {
   val isRtsp =
     streamUrl.startsWith("rtsp://", ignoreCase = true) ||
       streamUrl.startsWith("rtspt://", ignoreCase = true)
-  val preferLibVlcDirectly =
-    remember(streamUrl) {
-      isRtsp &&
-        (streamUrl.contains(".264", ignoreCase = true) ||
-          streamUrl.contains(":80/", ignoreCase = true) ||
-          streamUrl.contains("/live/ch", ignoreCase = true) ||
-          streamUrl.contains("user=", ignoreCase = true))
+  val isHttpMjpeg =
+    CameraSlot.isHttpVideoOrMjpegUrl(streamUrl) &&
+      (streamUrl.contains("/video", ignoreCase = true) ||
+        streamUrl.contains("mjpeg", ignoreCase = true) ||
+        streamUrl.contains(".mjpg", ignoreCase = true) ||
+        streamUrl.contains("videostream", ignoreCase = true) ||
+        streamUrl.contains("action=stream", ignoreCase = true))
+
+  // Prefer LibVLC directly for all RTSP & HTTP-MJPEG live camera streams:
+  // LibVLC renders via TextureView + SW decode in multi-tile grids, avoiding MediaCodec
+  // concurrent-decoder exhaustion and SurfaceView first-frame stalls on home tiles.
+  val preferLibVlcDirectly = remember(streamUrl) { isRtsp || isHttpMjpeg }
+  val libVlcUrl =
+    remember(streamUrl, username, password) {
+      if (isHttpMjpeg && username.isNotBlank() && !streamUrl.contains("@") && streamUrl.contains("://")) {
+        val schemeEnd = streamUrl.indexOf("://") + 3
+        val encUser = java.net.URLEncoder.encode(username.trim(), "UTF-8").replace("+", "%20")
+        val encPass = java.net.URLEncoder.encode(password, "UTF-8").replace("+", "%20")
+        streamUrl.substring(0, schemeEnd) + "$encUser:$encPass@" + streamUrl.substring(schemeEnd)
+      } else {
+        streamUrl
+      }
     }
   var useLibVlc by remember(streamUrl) { mutableStateOf(preferLibVlcDirectly) }
 
-  if (useLibVlc && isRtsp) {
+  if (useLibVlc) {
     LibVlcVideoFeed(
-      rtspUrl = streamUrl,
+      rtspUrl = libVlcUrl,
       isFullscreen = isFullscreen,
+      useHardwareDecoder = isFullscreen || activeTileCount <= 1,
       modifier = modifier,
     )
   } else {
@@ -218,9 +294,7 @@ private fun CameraVideoFeed(
       username = username,
       password = password,
       isFullscreen = isFullscreen,
-      onRtspPlaybackFailure = {
-        if (isRtsp) useLibVlc = true
-      },
+      onRtspPlaybackFailure = { useLibVlc = true },
       modifier = modifier,
     )
   }
@@ -253,10 +327,30 @@ private fun RtspExoPlayerFeed(
 
   LaunchedEffect(isFullscreen) { exoPlayer.volume = if (isFullscreen) 1f else 0f }
 
+  // Watchdog: if ExoPlayer connects and stays READY/BUFFERING without advancing frames, fall back cleanly
+  LaunchedEffect(rtspUrl, exoPlayer) {
+    var lastPos = -1L
+    var stalledTicks = 0
+    while (isActive) {
+      delay(2500L)
+      val state = exoPlayer.playbackState
+      val pos = exoPlayer.currentPosition
+      if (state == Player.STATE_READY && exoPlayer.playWhenReady) {
+        if (pos == lastPos && pos > 0L) {
+          stalledTicks++
+          if (stalledTicks >= 3) {
+            onRtspPlaybackFailure()
+            break
+          }
+        } else {
+          stalledTicks = 0
+          lastPos = pos
+        }
+      }
+    }
+  }
+
   DisposableEffect(rtspUrl) {
-    val isRtsp =
-      rtspUrl.startsWith("rtsp://", ignoreCase = true) ||
-        rtspUrl.startsWith("rtspt://", ignoreCase = true)
     val listener =
       object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
@@ -266,18 +360,17 @@ private fun RtspExoPlayerFeed(
               isBuffering = false
               errorMsg = null
             }
-            Player.STATE_ENDED -> isBuffering = false
+            Player.STATE_ENDED -> {
+              isBuffering = false
+              onRtspPlaybackFailure()
+            }
             Player.STATE_IDLE -> Unit
           }
         }
 
         override fun onPlayerError(error: PlaybackException) {
           isBuffering = false
-          if (isRtsp) {
-            onRtspPlaybackFailure()
-          } else {
-            errorMsg = "Stream nedostupný (${error.errorCodeName})"
-          }
+          onRtspPlaybackFailure()
         }
       }
     exoPlayer.addListener(listener)
@@ -310,13 +403,9 @@ private fun RtspExoPlayerFeed(
         exoPlayer.setMediaSource(mediaSource)
       }
       exoPlayer.prepare()
-    }.onFailure { e ->
+    }.onFailure {
       isBuffering = false
-      if (isRtsp) {
-        onRtspPlaybackFailure()
-      } else {
-        errorMsg = e.localizedMessage ?: "Neplatná adresa streamu"
-      }
+      onRtspPlaybackFailure()
     }
 
     onDispose {
@@ -328,7 +417,7 @@ private fun RtspExoPlayerFeed(
   Box(modifier = modifier.background(Color.Black)) {
     AndroidView(
       factory = { ctx ->
-        PlayerView(ctx).apply {
+        (LayoutInflater.from(ctx).inflate(R.layout.exo_texture_player_view, null, false) as PlayerView).apply {
           useController = false
           isClickable = false
           isFocusable = false
@@ -342,7 +431,9 @@ private fun RtspExoPlayerFeed(
         }
       },
       update = { view ->
-        view.player = exoPlayer
+        if (view.player !== exoPlayer) {
+          view.player = exoPlayer
+        }
         view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
       },
       modifier = Modifier.fillMaxSize(),
@@ -385,12 +476,19 @@ private fun RtspExoPlayerFeed(
 private fun LibVlcVideoFeed(
   rtspUrl: String,
   isFullscreen: Boolean,
+  useHardwareDecoder: Boolean,
   modifier: Modifier = Modifier,
 ) {
   val context = LocalContext.current
+  val lang = LocalAppLanguage.current
+  val isRtspSource = rtspUrl.startsWith("rtsp", ignoreCase = true)
   var isBuffering by remember(rtspUrl) { mutableStateOf(true) }
   var errorMsg by remember(rtspUrl) { mutableStateOf<String?>(null) }
-  var forceRtspTcp by remember(rtspUrl) { mutableStateOf(false) }
+  // Default to RTSP-over-TCP for reliable continuous frame delivery in multi-tile LAN streaming
+  var useRtspTcp by remember(rtspUrl) { mutableStateOf(isRtspSource) }
+  var reconnectNonce by remember(rtspUrl) { mutableIntStateOf(0) }
+  var lastProgressMs by remember(rtspUrl) { mutableLongStateOf(android.os.SystemClock.elapsedRealtime()) }
+  var hasRenderedVideo by remember(rtspUrl) { mutableStateOf(false) }
 
   val vlcLayout =
     remember(rtspUrl) {
@@ -415,47 +513,84 @@ private fun LibVlcVideoFeed(
     }
   }
 
-  DisposableEffect(rtspUrl, forceRtspTcp) {
+  // Watchdog: if frames stop progressing for > 9 seconds after starting, restart cleanly
+  LaunchedEffect(rtspUrl, reconnectNonce, useRtspTcp) {
+    while (isActive) {
+      delay(3000L)
+      val elapsedSinceFrame = android.os.SystemClock.elapsedRealtime() - lastProgressMs
+      if (hasRenderedVideo && elapsedSinceFrame > 9000L) {
+        lastProgressMs = android.os.SystemClock.elapsedRealtime()
+        isBuffering = true
+        reconnectNonce++
+        break
+      }
+    }
+  }
+
+  DisposableEffect(rtspUrl, useRtspTcp, useHardwareDecoder, reconnectNonce) {
     var libVlc: LibVLC? = null
     var mediaPlayer: MediaPlayer? = null
 
     runCatching {
       val args =
         arrayListOf(
-          "--network-caching=350",
-          "--live-caching=350",
+          "--network-caching=500",
+          "--live-caching=500",
           "--clock-jitter=0",
           "--clock-synchro=0",
         ).apply {
-          if (forceRtspTcp) add("--rtsp-tcp")
+          if (!useHardwareDecoder) {
+            add("--avcodec-hw=none")
+          }
+          if (isRtspSource && useRtspTcp) {
+            add("--rtsp-tcp")
+          }
         }
       libVlc = LibVLC(context, args)
       mediaPlayer =
         MediaPlayer(libVlc).apply {
-          attachViews(vlcLayout, null, false, true)
+          attachViews(vlcLayout, null, false, /* textureView= */ true)
           volume = if (isFullscreen) 100 else 0
           videoScale = MediaPlayer.ScaleType.SURFACE_BEST_FIT
           setEventListener { event ->
             when (event.type) {
               MediaPlayer.Event.Playing,
-              MediaPlayer.Event.Vout -> {
+              MediaPlayer.Event.Vout,
+              MediaPlayer.Event.TimeChanged,
+              MediaPlayer.Event.PositionChanged -> {
                 mainHandler.post {
-                  isBuffering = false
-                  errorMsg = null
+                  lastProgressMs = android.os.SystemClock.elapsedRealtime()
+                  if (event.type == MediaPlayer.Event.Vout || event.type == MediaPlayer.Event.TimeChanged) {
+                    hasRenderedVideo = true
+                    isBuffering = false
+                    errorMsg = null
+                  }
                 }
               }
               MediaPlayer.Event.Buffering -> {
                 if (event.buffering >= 100f) {
-                  mainHandler.post { isBuffering = false }
+                  mainHandler.post {
+                    lastProgressMs = android.os.SystemClock.elapsedRealtime()
+                    isBuffering = false
+                  }
+                }
+              }
+              MediaPlayer.Event.EndReached -> {
+                mainHandler.post {
+                  hasRenderedVideo = false
+                  isBuffering = true
+                  reconnectNonce++
                 }
               }
               MediaPlayer.Event.EncounteredError -> {
                 mainHandler.post {
                   isBuffering = false
-                  if (!forceRtspTcp) {
-                    forceRtspTcp = true
+                  hasRenderedVideo = false
+                  if (isRtspSource && useRtspTcp) {
+                    // Retry once with UDP transport in case camera/NVR rejects TCP interleaved
+                    useRtspTcp = false
                   } else {
-                    errorMsg = "RTSP stream nedostupný"
+                    errorMsg = tr(lang, "Stream kamery nedostupný", "Camera stream unavailable")
                   }
                 }
               }
@@ -466,13 +601,16 @@ private fun LibVlcVideoFeed(
 
       val media =
         Media(libVlc, Uri.parse(rtspUrl)).apply {
-          setHWDecoderEnabled(true, false)
-          addOption(":network-caching=350")
-          if (forceRtspTcp) addOption(":rtsp-tcp")
+          setHWDecoderEnabled(useHardwareDecoder, false)
+          addOption(":network-caching=500")
+          addOption(":live-caching=500")
+          if (isRtspSource && useRtspTcp) addOption(":rtsp-tcp")
         }
       mediaPlayer?.media = media
       media.release()
-      mediaPlayer?.play()
+      vlcLayout.post {
+        runCatching { mediaPlayer?.play() }
+      }
     }.onFailure { err ->
       isBuffering = false
       errorMsg = err.localizedMessage ?: "Chyba VLC přehrávače"
@@ -545,10 +683,11 @@ private fun HttpSnapshotFeed(
   val lang = LocalAppLanguage.current
   var refreshTick by remember(url) { mutableLongStateOf(0L) }
   var hasError by remember(url) { mutableStateOf(false) }
+  var lastDrawable by remember(url) { mutableStateOf<Drawable?>(null) }
 
   LaunchedEffect(url) {
     while (isActive) {
-      delay(1000L)
+      delay(400L)
       refreshTick++
     }
   }
@@ -567,12 +706,18 @@ private fun HttpSnapshotFeed(
           .data(requestUrl)
           .apply {
             if (authHeader != null) addHeader("Authorization", authHeader)
+            addHeader("Cache-Control", "no-cache, no-store, must-revalidate")
+            addHeader("Pragma", "no-cache")
+            if (lastDrawable != null) placeholder(lastDrawable)
           }
           .memoryCachePolicy(CachePolicy.DISABLED)
           .diskCachePolicy(CachePolicy.DISABLED)
           .crossfade(false)
           .listener(
-            onSuccess = { _, _ -> hasError = false },
+            onSuccess = { _, result ->
+              lastDrawable = result.drawable
+              hasError = false
+            },
             onError = { _, _ -> hasError = true },
           )
           .build(),
@@ -581,7 +726,7 @@ private fun HttpSnapshotFeed(
       modifier = Modifier.fillMaxSize(),
     )
 
-    if (hasError) {
+    if (hasError && lastDrawable == null) {
       Column(
         modifier = Modifier.align(Alignment.Center).padding(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,

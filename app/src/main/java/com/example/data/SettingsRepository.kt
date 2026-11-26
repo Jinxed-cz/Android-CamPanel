@@ -17,6 +17,8 @@ import com.example.model.ClockStylePreset
 import com.example.model.DisplaySettings
 import com.example.model.FavoriteRadioStation
 import com.example.model.RadioStation
+import com.example.model.RecordingStorageLocation
+import com.example.model.RecordingStorageSettings
 import com.example.model.WeatherColorThemePreset
 import com.example.model.WeatherLocation
 import com.example.model.WeatherMetricToggle
@@ -71,6 +73,19 @@ class SettingsRepository(private val context: Context) {
     val APPEARANCE_CLOCK_STYLE = stringPreferencesKey("appearance_clock_style")
     val APPEARANCE_CLOCK_SECONDS = booleanPreferencesKey("appearance_clock_seconds")
     val APPEARANCE_BATTERY_VISIBLE = booleanPreferencesKey("appearance_battery_visible")
+    val CAMERA_DISPLAY_COUNT = intPreferencesKey("camera_display_count")
+    val RECORDING_STORAGE_LOCATION = stringPreferencesKey("recording_storage_location")
+    val RECORDING_CUSTOM_TREE_URI = stringPreferencesKey("recording_custom_tree_uri")
+    val RECORDING_CUSTOM_FOLDER_LABEL = stringPreferencesKey("recording_custom_folder_label")
+  }
+
+  companion object {
+    fun normalizeCameraDisplayCount(rawCount: Int?): Int =
+      when (rawCount) {
+        1 -> 1
+        2 -> 2
+        else -> 4
+      }
   }
 
   val camerasFlow: Flow<List<CameraSlot>> =
@@ -83,6 +98,11 @@ class SettingsRepository(private val context: Context) {
           null
         }
       normalizeSlots(parsed)
+    }
+
+  val cameraDisplayCountFlow: Flow<Int> =
+    context.dashboardDataStore.data.map { prefs ->
+      normalizeCameraDisplayCount(prefs[Keys.CAMERA_DISPLAY_COUNT])
     }
 
   val weatherLocationFlow: Flow<WeatherLocation> =
@@ -173,10 +193,27 @@ class SettingsRepository(private val context: Context) {
       )
     }
 
+  val recordingStorageSettingsFlow: Flow<RecordingStorageSettings> =
+    context.dashboardDataStore.data.map { prefs ->
+      RecordingStorageSettings(
+        locationTypeId =
+          RecordingStorageLocation.fromId(prefs[Keys.RECORDING_STORAGE_LOCATION]).id,
+        customTreeUri = prefs[Keys.RECORDING_CUSTOM_TREE_URI].orEmpty(),
+        customFolderLabel = prefs[Keys.RECORDING_CUSTOM_FOLDER_LABEL].orEmpty(),
+      )
+    }
+
   suspend fun saveCameras(slots: List<CameraSlot>) {
     val normalized = normalizeSlots(slots)
     context.dashboardDataStore.edit { prefs ->
       prefs[Keys.CAMERAS_JSON] = cameraListAdapter.toJson(normalized)
+    }
+  }
+
+  suspend fun saveCameraDisplayCount(count: Int) {
+    val normalized = normalizeCameraDisplayCount(count)
+    context.dashboardDataStore.edit { prefs ->
+      prefs[Keys.CAMERA_DISPLAY_COUNT] = normalized
     }
   }
 
@@ -246,6 +283,14 @@ class SettingsRepository(private val context: Context) {
       prefs[Keys.DISPLAY_NIGHT_END_HOUR] = settings.nightEndHour.coerceIn(0, 23)
       prefs[Keys.DISPLAY_NIGHT_END_MIN] = settings.nightEndMinute.coerceIn(0, 59)
       prefs[Keys.DISPLAY_NIGHT_BRIGHTNESS_PCT] = settings.nightBrightnessPercent.coerceIn(1, 50)
+    }
+  }
+
+  suspend fun saveRecordingStorageSettings(settings: RecordingStorageSettings) {
+    context.dashboardDataStore.edit { prefs ->
+      prefs[Keys.RECORDING_STORAGE_LOCATION] = settings.locationType.id
+      prefs[Keys.RECORDING_CUSTOM_TREE_URI] = settings.customTreeUri
+      prefs[Keys.RECORDING_CUSTOM_FOLDER_LABEL] = settings.customFolderLabel
     }
   }
 

@@ -1,11 +1,15 @@
 package com.example.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AmbientLightMonitor
 import com.example.data.BatteryMonitor
+import com.example.data.CameraRecordingCoordinator
 import com.example.data.Go2RtcClient
+import com.example.data.TuyaAuthMode
+import com.example.data.TuyaRegion
 import com.example.data.NetworkCameraDiscoveryManager
 import com.example.data.RadioDirectoryClient
 import com.example.data.RadioPlayerController
@@ -16,6 +20,7 @@ import com.example.model.AladinForecastData
 import com.example.model.AppLanguage
 import com.example.model.AppearanceSettings
 import com.example.model.BatteryRuntimeStatus
+import com.example.model.CameraRecordingRuntimeStatus
 import com.example.model.CameraSlot
 import com.example.model.DiscoveredNetworkCamera
 import com.example.model.DisplayBrightnessMath
@@ -26,6 +31,10 @@ import com.example.model.NvrProtocolPreset
 import com.example.model.RadioDirectoryStation
 import com.example.model.RadioStation
 import com.example.model.RadioUiState
+import com.example.model.RecordedSegmentInfo
+import com.example.model.RecordingStorageLocation
+import com.example.model.RecordingStorageSettings
+import com.example.model.RecordingStorageStats
 import com.example.model.WeatherLocation
 import com.example.model.WeatherMetricToggle
 import com.example.model.WeatherProvider
@@ -65,9 +74,13 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
   private val radioController = RadioPlayerController(application)
   private val ambientLightMonitor = AmbientLightMonitor(application)
   private val batteryMonitor = BatteryMonitor(application)
+  private val recordingCoordinator = CameraRecordingCoordinator.getInstance(application)
 
   val radioState: StateFlow<RadioUiState> = radioController.state
   val batteryStatus: StateFlow<BatteryRuntimeStatus> = batteryMonitor.status
+  val recordingStatuses: StateFlow<Map<Int, CameraRecordingRuntimeStatus>> = recordingCoordinator.statuses
+  val recordedSegments: StateFlow<List<RecordedSegmentInfo>> = recordingCoordinator.segments
+  val recordingStorageStats: StateFlow<RecordingStorageStats> = recordingCoordinator.storageStats
 
   private val czechLocale = Locale.forLanguageTag("cs-CZ")
   private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss", czechLocale)
@@ -93,6 +106,13 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
       scope = viewModelScope,
       started = SharingStarted.WhileSubscribed(5_000),
       initialValue = (0..3).map { CameraSlot(slotIndex = it) },
+    )
+
+  val cameraDisplayCount: StateFlow<Int> =
+    settingsRepo.cameraDisplayCountFlow.stateIn(
+      scope = viewModelScope,
+      started = SharingStarted.Eagerly,
+      initialValue = 4,
     )
 
   val weatherLocation: StateFlow<WeatherLocation> =
@@ -147,6 +167,13 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
       scope = viewModelScope,
       started = SharingStarted.Eagerly,
       initialValue = DisplaySettings(),
+    )
+
+  val recordingStorageSettings: StateFlow<RecordingStorageSettings> =
+    settingsRepo.recordingStorageSettingsFlow.stateIn(
+      scope = viewModelScope,
+      started = SharingStarted.Eagerly,
+      initialValue = RecordingStorageSettings(),
     )
 
   private val _nightPreviewActive = MutableStateFlow(false)
@@ -245,6 +272,19 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     startClockTicker()
     observeLocationAndAutoRefreshWeather()
     observeSavedRadioStation()
+    observeCameraRecordingConfig()
+  }
+
+  private fun observeCameraRecordingConfig() {
+    viewModelScope.launch {
+      combine(settingsRepo.camerasFlow, settingsRepo.recordingStorageSettingsFlow) { slots, storage ->
+        slots to storage
+      }
+        .distinctUntilChanged()
+        .collect { (slots, storage) ->
+          recordingCoordinator.syncConfiguration(slots, storage)
+        }
+    }
   }
 
   private fun observeSavedRadioStation() {
@@ -511,6 +551,12 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
   }
 
   // --- Camera Settings & Multi-Protocol Network Discovery ---
+
+  fun setCameraDisplayCount(count: Int) {
+    resetSettingsInactivityTimer()
+    val normalized = SettingsRepository.normalizeCameraDisplayCount(count)
+    viewModelScope.launch { settingsRepo.saveCameraDisplayCount(normalized) }
+  }
 
   fun scanOnvifCameras() {
     resetSettingsInactivityTimer()
@@ -812,6 +858,67 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     }
   }
 
+  fun registerTuyaInGo2Rtc(
+    go2RtcHost: String,
+    apiPort: Int,
+    rtspPort: Int,
+    targetSlotIndex: Int,
+    streamName: String,
+    region: TuyaRegion,
+    authMode: TuyaAuthMode,
+    deviceId: String,
+    email: String,
+    password: String,
+    uid: String,
+    clientId: String,
+    clientSecret: String,
+    useSubStream: Boolean,
+    onCompleted: (Boolean, String) -> Unit,
+  ) {
+    resetSettingsInactivityTimer()
+    viewModelScope.launch {
+      go2RtcClient.registerTuyaStream(
+        go2RtcHost = go2RtcHost,
+        apiPort = apiPort,
+        rtspPort = rtspPort,
+        streamName = streamName,
+        region = region,
+        authMode = authMode,
+        deviceId = deviceId,
+        email = email,
+        password = password,
+        uid = uid,
+        clientId = clientId,
+        clientSecret = clientSecret,
+        useSubStream = useSubStream,
+      )
+        .onSuccess { res ->
+          val stream = res.streams.firstOrNull()
+          if (stream != null) {
+            val safeIdx = targetSlotIndex.coerceIn(0, 3)
+            val existing = cameras.value.getOrNull(safeIdx) ?: CameraSlot(slotIndex = safeIdx)
+            val updatedSlot =
+              existing.copy(
+                slotIndex = safeIdx,
+                name = existing.name.ifBlank { stream.name.replace('_', ' ').replaceFirstChar { it.uppercase() } },
+                streamUrl = stream.rtspUrl,
+                onvifDeviceAddress = go2RtcHost.trim().ifBlank { "127.0.0.1" },
+                protocolLabel = "go2rtc · Tuya",
+              )
+            saveSingleSlot(updatedSlot)
+          }
+          _onvifStatusMessage.value = res.statusMessage
+          onCompleted(true, res.statusMessage)
+        }
+        .onFailure { err ->
+          val msg = err.localizedMessage ?: "Nepodařilo se odeslat Tuya/SmartLife stream do go2rtc"
+          _onvifStatusMessage.value = msg
+          onCompleted(false, msg)
+        }
+      resetSettingsInactivityTimer()
+    }
+  }
+
   fun saveCameraSlot(slot: CameraSlot) {
     resetSettingsInactivityTimer()
     viewModelScope.launch { saveSingleSlot(slot) }
@@ -839,6 +946,51 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         if (existing.slotIndex == slot.slotIndex) slot else existing
       }
     settingsRepo.saveCameras(updated)
+  }
+
+  // --- Camera Continuous & Motion Recording Storage & Archive ---
+
+  fun updateRecordingStorageLocation(location: RecordingStorageLocation) {
+    resetSettingsInactivityTimer()
+    val updated = recordingStorageSettings.value.copy(locationTypeId = location.id)
+    viewModelScope.launch { settingsRepo.saveRecordingStorageSettings(updated) }
+  }
+
+  fun setCustomRecordingFolder(
+    treeUri: Uri,
+    displayLabel: String,
+    location: RecordingStorageLocation = RecordingStorageLocation.APP_EXTERNAL_PRIMARY,
+  ) {
+    resetSettingsInactivityTimer()
+    recordingCoordinator.storageManager.persistSafPermission(treeUri)
+    val targetLocation =
+      if (location == RecordingStorageLocation.SD_CARD_APP) {
+        RecordingStorageLocation.SD_CARD_APP
+      } else {
+        RecordingStorageLocation.APP_EXTERNAL_PRIMARY
+      }
+    val updated =
+      RecordingStorageSettings(
+        locationTypeId = targetLocation.id,
+        customTreeUri = treeUri.toString(),
+        customFolderLabel = displayLabel,
+      )
+    viewModelScope.launch { settingsRepo.saveRecordingStorageSettings(updated) }
+  }
+
+  fun refreshRecordings() {
+    resetSettingsInactivityTimer()
+    recordingCoordinator.refreshNow()
+  }
+
+  fun deleteRecordedSegment(segment: RecordedSegmentInfo) {
+    resetSettingsInactivityTimer()
+    recordingCoordinator.deleteSegment(segment)
+  }
+
+  fun clearCameraRecordings(slotIndex: Int) {
+    resetSettingsInactivityTimer()
+    recordingCoordinator.clearAllSegmentsForCamera(slotIndex)
   }
 
   // --- Online Radio Controls & Internet Directory ---

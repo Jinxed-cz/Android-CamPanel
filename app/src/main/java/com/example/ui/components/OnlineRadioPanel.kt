@@ -5,9 +5,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -87,197 +89,216 @@ fun OnlineRadioPanel(
   val station = radioState.activeStation
   val accentColor = Color(station.accentColorHex)
 
-  Column(
+  BoxWithConstraints(
     modifier =
       modifier
         .clip(shape)
         .background(palette.surface)
         .border(1.dp, palette.surfaceBorder, shape)
-        .padding(8.dp)
+        .padding(6.dp)
         .testTag("online_radio_panel"),
-    verticalArrangement = Arrangement.SpaceBetween,
   ) {
-    // TOP HALF: Station Icon & Info (clickable to open station selection)
-    Box(
-      modifier =
-        Modifier.fillMaxWidth()
-          .weight(1f)
-          .clip(RoundedCornerShape(9.dp))
-          .background(
-            Brush.verticalGradient(
-              listOf(accentColor.copy(alpha = 0.22f), palette.surfaceElevated)
-            )
-          )
-          .border(
-            1.dp,
-            if (radioState.isPlaying) accentColor.copy(alpha = 0.7f) else palette.surfaceBorder,
-            RoundedCornerShape(9.dp),
-          )
-          .clickable { showStationPicker = true }
-          .padding(horizontal = 8.dp, vertical = 6.dp)
-          .testTag("radio_station_button"),
-    ) {
-      // Output route indicator (Bluetooth speaker vs internal speaker)
-      Row(
-        modifier = Modifier.align(Alignment.TopEnd),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-      ) {
-        Icon(
-          imageVector =
-            if (radioState.isBluetoothConnected) Icons.Rounded.BluetoothAudio
-            else Icons.Rounded.VolumeUp,
-          contentDescription = radioState.outputDeviceName,
-          tint = if (radioState.isBluetoothConnected) palette.accentBright else DashTextMuted,
-          modifier = Modifier.size(13.dp),
-        )
-        Text(
-          text = if (radioState.isBluetoothConnected) "BT" else "${radioState.volumePercent}%",
-          style = MaterialTheme.typography.labelSmall,
-          color = if (radioState.isBluetoothConnected) palette.accentBright else DashTextSecondary,
-          fontSize = 9.sp,
-        )
+    val isCompactHeight = maxHeight < 145.dp
+    val isCompactWidth = maxWidth < 170.dp
+    val iconBadgeSize =
+      when {
+        isCompactHeight -> 26.dp
+        maxWidth >= 200.dp && maxHeight >= 180.dp -> 42.dp
+        else -> 34.dp
+      }
+    val titleSp =
+      when {
+        isCompactHeight || isCompactWidth -> 12.sp
+        maxWidth >= 200.dp -> 15.sp
+        else -> 13.sp
       }
 
-      // Station Icon + Name centered in top half
-      Column(
-        modifier = Modifier.align(Alignment.Center).fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+    Column(
+      modifier = Modifier.fillMaxSize(),
+      verticalArrangement = Arrangement.SpaceBetween,
+    ) {
+      // TOP HALF: Station Icon & Info (clickable to open station selection)
+      Box(
+        modifier =
+          Modifier.fillMaxWidth()
+            .weight(1f)
+            .clip(RoundedCornerShape(9.dp))
+            .background(
+              Brush.verticalGradient(
+                listOf(accentColor.copy(alpha = 0.22f), palette.surfaceElevated)
+              )
+            )
+            .border(
+              1.dp,
+              if (radioState.isPlaying) accentColor.copy(alpha = 0.7f) else palette.surfaceBorder,
+              RoundedCornerShape(9.dp),
+            )
+            .clickable { showStationPicker = true }
+            .padding(horizontal = 6.dp, vertical = 4.dp)
+            .testTag("radio_station_button"),
       ) {
+        // Output route indicator (Bluetooth speaker vs internal speaker)
+        Row(
+          modifier = Modifier.align(Alignment.TopEnd),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+          Icon(
+            imageVector =
+              if (radioState.isBluetoothConnected) Icons.Rounded.BluetoothAudio
+              else Icons.Rounded.VolumeUp,
+            contentDescription = radioState.outputDeviceName,
+            tint = if (radioState.isBluetoothConnected) palette.accentBright else DashTextMuted,
+            modifier = Modifier.size(12.dp),
+          )
+          Text(
+            text = if (radioState.isBluetoothConnected) "BT" else "${radioState.volumePercent}%",
+            style = MaterialTheme.typography.labelSmall,
+            color = if (radioState.isBluetoothConnected) palette.accentBright else DashTextSecondary,
+            fontSize = 9.sp,
+          )
+        }
+
+        // Station Icon + Name centered in top half
+        Column(
+          modifier = Modifier.align(Alignment.Center).fillMaxWidth(),
+          horizontalAlignment = Alignment.CenterHorizontally,
+          verticalArrangement = Arrangement.Center,
+        ) {
+          Box(
+            modifier =
+              Modifier.size(iconBadgeSize)
+                .clip(CircleShape)
+                .background(accentColor.copy(alpha = 0.24f))
+                .border(1.5.dp, accentColor, CircleShape),
+            contentAlignment = Alignment.Center,
+          ) {
+            Icon(
+              imageVector = Icons.Rounded.Radio,
+              contentDescription = tr(lang, "Vybrat rozhlasovou stanici", "Select radio station"),
+              tint = accentColor,
+              modifier = Modifier.size(iconBadgeSize * 0.54f),
+            )
+          }
+          Spacer(Modifier.height(if (isCompactHeight) 2.dp else 4.dp))
+          Text(
+            text = station.displayName,
+            style = MaterialTheme.typography.titleMedium,
+            color = DashTextPrimary,
+            fontWeight = FontWeight.Bold,
+            fontSize = titleSp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          val outputName =
+            if (!radioState.isBluetoothConnected && radioState.outputDeviceName == "Reproduktor")
+              tr(lang, "Reproduktor", "Speaker")
+            else radioState.outputDeviceName
+          Text(
+            text =
+              when {
+                radioState.errorMessage != null -> radioState.errorMessage
+                radioState.isBuffering -> tr(lang, "Připojuji...", "Connecting...")
+                radioState.isPlaying -> "${tr(lang, "Hraje", "Playing")} · $outputName"
+                else -> tr(lang, "Klikni pro stanici", "Tap for station")
+              },
+            style = MaterialTheme.typography.labelSmall,
+            color =
+              when {
+                radioState.errorMessage != null -> OfflineRed
+                radioState.isPlaying -> LiveEmerald
+                else -> DashTextMuted
+              },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            fontSize = 9.sp,
+          )
+        }
+      }
+
+      Spacer(Modifier.height(if (isCompactHeight) 4.dp else 6.dp))
+
+      // Volume level thin bar
+      LinearProgressIndicator(
+        progress = { (radioState.volumePercent / 100f).coerceIn(0f, 1f) },
+        modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+        color = accentColor,
+        trackColor = palette.surfaceElevated,
+      )
+
+      Spacer(Modifier.height(if (isCompactHeight) 4.dp else 6.dp))
+
+      // BOTTOM HALF: Play/Stop button + Volume - and + buttons
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        // Volume -
         Box(
           modifier =
-            Modifier.size(34.dp)
-              .clip(CircleShape)
-              .background(accentColor.copy(alpha = 0.24f))
-              .border(1.5.dp, accentColor, CircleShape),
+            Modifier.size(48.dp)
+              .clip(RoundedCornerShape(8.dp))
+              .background(palette.surfaceElevated)
+              .border(1.dp, palette.surfaceBorder, RoundedCornerShape(8.dp))
+              .clickable(onClick = onVolumeDown)
+              .testTag("radio_volume_down"),
           contentAlignment = Alignment.Center,
         ) {
-        Icon(
-          imageVector = Icons.Rounded.Radio,
-          contentDescription = tr(lang, "Vybrat rozhlasovou stanici", "Select radio station"),
-          tint = accentColor,
-          modifier = Modifier.size(18.dp),
-        )
-        }
-        Spacer(Modifier.height(4.dp))
-        Text(
-          text = station.displayName,
-          style = MaterialTheme.typography.titleMedium,
-          color = DashTextPrimary,
-          fontWeight = FontWeight.Bold,
-          fontSize = 13.sp,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-        )
-        val outputName =
-          if (!radioState.isBluetoothConnected && radioState.outputDeviceName == "Reproduktor")
-            tr(lang, "Reproduktor", "Speaker")
-          else radioState.outputDeviceName
-        Text(
-          text =
-            when {
-              radioState.errorMessage != null -> radioState.errorMessage
-              radioState.isBuffering -> tr(lang, "Připojuji...", "Connecting...")
-              radioState.isPlaying -> "${tr(lang, "Hraje", "Playing")} · $outputName"
-              else -> tr(lang, "Klikni pro stanici", "Tap for station")
-            },
-          style = MaterialTheme.typography.labelSmall,
-          color =
-            when {
-              radioState.errorMessage != null -> OfflineRed
-              radioState.isPlaying -> LiveEmerald
-              else -> DashTextMuted
-            },
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-          fontSize = 9.sp,
-        )
-      }
-    }
-
-    Spacer(Modifier.height(6.dp))
-
-    // Volume level thin bar
-    LinearProgressIndicator(
-      progress = { (radioState.volumePercent / 100f).coerceIn(0f, 1f) },
-      modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
-      color = accentColor,
-      trackColor = palette.surfaceElevated,
-    )
-
-    Spacer(Modifier.height(6.dp))
-
-    // BOTTOM HALF: Play/Stop button + Volume - and + buttons
-    Row(
-      modifier = Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.spacedBy(5.dp),
-      verticalAlignment = Alignment.CenterVertically,
-    ) {
-      // Volume -
-      Box(
-        modifier =
-          Modifier.size(48.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(palette.surfaceElevated)
-            .border(1.dp, palette.surfaceBorder, RoundedCornerShape(8.dp))
-            .clickable(onClick = onVolumeDown)
-            .testTag("radio_volume_down"),
-        contentAlignment = Alignment.Center,
-      ) {
-        Icon(
-          imageVector = Icons.Rounded.Remove,
-          contentDescription = tr(lang, "Snížit hlasitost", "Volume down"),
-          tint = DashTextPrimary,
-          modifier = Modifier.size(20.dp),
-        )
-      }
-
-      // Play / Stop toggle
-      val isActive = radioState.isPlaying || radioState.isBuffering
-      Box(
-        modifier =
-          Modifier.weight(1f)
-            .height(48.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (isActive) OfflineRed else palette.accent)
-            .clickable(onClick = onTogglePlayStop)
-            .testTag("radio_play_stop_button"),
-        contentAlignment = Alignment.Center,
-      ) {
-        if (radioState.isBuffering) {
-          CircularProgressIndicator(
-            modifier = Modifier.size(20.dp),
-            color = Color.White,
-            strokeWidth = 2.5.dp,
-          )
-        } else {
           Icon(
-            imageVector = if (isActive) Icons.Rounded.Stop else Icons.Rounded.PlayArrow,
-            contentDescription = if (isActive) "Stop" else "Play",
-            tint = Color.White,
-            modifier = Modifier.size(26.dp),
+            imageVector = Icons.Rounded.Remove,
+            contentDescription = tr(lang, "Snížit hlasitost", "Volume down"),
+            tint = DashTextPrimary,
+            modifier = Modifier.size(20.dp),
           )
         }
-      }
 
-      // Volume +
-      Box(
-        modifier =
-          Modifier.size(48.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(palette.surfaceElevated)
-            .border(1.dp, palette.surfaceBorder, RoundedCornerShape(8.dp))
-            .clickable(onClick = onVolumeUp)
-            .testTag("radio_volume_up"),
-        contentAlignment = Alignment.Center,
-      ) {
-        Icon(
-          imageVector = Icons.Rounded.Add,
-          contentDescription = tr(lang, "Zvýšit hlasitost", "Volume up"),
-          tint = DashTextPrimary,
-          modifier = Modifier.size(20.dp),
-        )
+        // Play / Stop toggle
+        val isActive = radioState.isPlaying || radioState.isBuffering
+        Box(
+          modifier =
+            Modifier.weight(1f)
+              .height(48.dp)
+              .clip(RoundedCornerShape(8.dp))
+              .background(if (isActive) OfflineRed else palette.accent)
+              .clickable(onClick = onTogglePlayStop)
+              .testTag("radio_play_stop_button"),
+          contentAlignment = Alignment.Center,
+        ) {
+          if (radioState.isBuffering) {
+            CircularProgressIndicator(
+              modifier = Modifier.size(20.dp),
+              color = Color.White,
+              strokeWidth = 2.5.dp,
+            )
+          } else {
+            Icon(
+              imageVector = if (isActive) Icons.Rounded.Stop else Icons.Rounded.PlayArrow,
+              contentDescription = if (isActive) "Stop" else "Play",
+              tint = Color.White,
+              modifier = Modifier.size(26.dp),
+            )
+          }
+        }
+
+        // Volume +
+        Box(
+          modifier =
+            Modifier.size(48.dp)
+              .clip(RoundedCornerShape(8.dp))
+              .background(palette.surfaceElevated)
+              .border(1.dp, palette.surfaceBorder, RoundedCornerShape(8.dp))
+              .clickable(onClick = onVolumeUp)
+              .testTag("radio_volume_up"),
+          contentAlignment = Alignment.Center,
+        ) {
+          Icon(
+            imageVector = Icons.Rounded.Add,
+            contentDescription = tr(lang, "Zvýšit hlasitost", "Volume up"),
+            tint = DashTextPrimary,
+            modifier = Modifier.size(20.dp),
+          )
+        }
       }
     }
   }

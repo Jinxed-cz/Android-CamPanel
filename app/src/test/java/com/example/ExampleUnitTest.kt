@@ -397,5 +397,270 @@ class ExampleUnitTest {
     assertEquals(1.4, parsedMet.hourlyPoints[0].rainMm, 0.01)
     assertEquals(61, parsedMet.hourlyPoints[0].weatherCode)
   }
+
+  @Test
+  fun classicIpCamera_buildsHttpHttpsUrlsDetectsMjpegAndNormalizesBareIp() {
+    val mjpegUrl =
+      CameraSlot.buildManualStreamUrl(
+        ipAddress = "192.168.1.44",
+        portText = "8080",
+        path = "/video",
+        isHttp = true,
+      )
+    assertEquals("http://192.168.1.44:8080/video", mjpegUrl)
+    assertTrue(CameraSlot.isHttpVideoOrMjpegUrl(mjpegUrl))
+
+    val httpsUrl =
+      CameraSlot.buildManualStreamUrl(
+        ipAddress = "cam.example.com",
+        portText = "443",
+        path = "mjpeg",
+        isHttp = true,
+        useHttps = true,
+      )
+    assertEquals("https://cam.example.com:443/mjpeg", httpsUrl)
+    assertTrue(CameraSlot.isHttpVideoOrMjpegUrl(httpsUrl))
+
+    val snapshotUrl = "http://192.168.1.44:8080/shot.jpg"
+    assertFalse(CameraSlot.isHttpVideoOrMjpegUrl(snapshotUrl))
+
+    assertEquals(
+      "http://192.168.1.99:8080/video",
+      CameraSlot.normalizeManualUrl("192.168.1.99:8080/video", defaultIsHttp = true),
+    )
+    assertEquals(
+      "https://192.168.1.99/snapshot.jpg",
+      CameraSlot.normalizeManualUrl("https://192.168.1.99/snapshot.jpg", defaultIsHttp = true),
+    )
+    assertTrue(com.example.model.RtspPathPreset.IpCameraPresets.any { it.path == "/video" && it.isHttp })
+    assertTrue(com.example.model.RtspPathPreset.IpCameraPresets.any { it.path == "/snapshot.jpg" && it.isHttp })
+  }
+
+  @Test
+  fun cameraDisplayCount_andPrecipGrid_resolveCorrectly() {
+    assertEquals(1, com.example.data.SettingsRepository.normalizeCameraDisplayCount(1))
+    assertEquals(2, com.example.data.SettingsRepository.normalizeCameraDisplayCount(2))
+    assertEquals(4, com.example.data.SettingsRepository.normalizeCameraDisplayCount(4))
+    assertEquals(4, com.example.data.SettingsRepository.normalizeCameraDisplayCount(null))
+    assertEquals(4, com.example.data.SettingsRepository.normalizeCameraDisplayCount(3))
+
+    val lightRainPoints =
+      listOf(
+        com.example.model.AladinHourPoint("2026-11-25T10:00", 10, "10:00", 0, 12.0, 0.4, 0.0, 1015.0, 61),
+        com.example.model.AladinHourPoint("2026-11-25T11:00", 11, "11:00", 0, 11.5, 1.8, 0.0, 1014.0, 63),
+      )
+    val lightRainGrid = com.example.ui.components.computePrecipGrid(lightRainPoints, showRain = true, showSnow = false)
+    assertEquals(2.0, lightRainGrid.maxValue, 0.01)
+    assertEquals(1.0, lightRainGrid.midValue, 0.01)
+    assertEquals("mm", lightRainGrid.unitLabel)
+
+    val heavySnowPoints =
+      listOf(
+        com.example.model.AladinHourPoint("2026-11-25T10:00", 10, "10:00", 0, -3.0, 0.0, 3.2, 1008.0, 73),
+        com.example.model.AladinHourPoint("2026-11-25T11:00", 11, "11:00", 0, -4.0, 0.0, 7.5, 1006.0, 75),
+      )
+    val snowOnlyGrid = com.example.ui.components.computePrecipGrid(heavySnowPoints, showRain = false, showSnow = true)
+    assertEquals(10.0, snowOnlyGrid.maxValue, 0.01)
+    assertEquals("cm", snowOnlyGrid.unitLabel)
+  }
+
+  @Test
+  fun recordingRetentionPolicy_enforcesQuotaDaysAndStreamQuality() {
+    val slotHd =
+      CameraSlot(
+        slotIndex = 0,
+        streamUrl = "rtsp://192.168.1.50:80/ch0_0.264",
+        username = "admin",
+        password = "",
+      )
+    assertEquals(
+      "rtsp://admin:@192.168.1.50:80/ch0_1.264",
+      com.example.model.RecordingRetentionPolicy.resolveStreamUrlForQuality(
+        slotHd,
+        com.example.model.RecordingQuality.SD,
+      ),
+    )
+    assertEquals(
+      "rtsp://admin:@192.168.1.50:80/ch0_0.264",
+      com.example.model.RecordingRetentionPolicy.resolveStreamUrlForQuality(
+        slotHd,
+        com.example.model.RecordingQuality.HD,
+      ),
+    )
+
+    val continuousName =
+      com.example.model.RecordingRetentionPolicy.buildSegmentFileName(
+        slotIndex = 1,
+        timestampMs = 1_700_000_000_000L,
+        quality = com.example.model.RecordingQuality.SD,
+        isMotionEvent = false,
+      )
+    val motionName =
+      com.example.model.RecordingRetentionPolicy.buildSegmentFileName(
+        slotIndex = 1,
+        timestampMs = 1_700_000_000_000L,
+        quality = com.example.model.RecordingQuality.HD,
+        isMotionEvent = true,
+      )
+    assertTrue(continuousName.startsWith("cam2_") && continuousName.endsWith("_sd.mp4"))
+    assertFalse(com.example.model.RecordingRetentionPolicy.isMotionEventFileName(continuousName))
+    assertTrue(motionName.endsWith("_evt_hd.mp4"))
+    assertTrue(com.example.model.RecordingRetentionPolicy.isMotionEventFileName(motionName))
+    assertEquals(1, com.example.model.RecordingRetentionPolicy.parseSlotIndexFromFileName(motionName))
+    assertEquals(
+      com.example.model.RecordingQuality.HD,
+      com.example.model.RecordingRetentionPolicy.parseQualityFromFileName(motionName),
+    )
+
+    val now = 2_000_000_000_000L
+    val dayMs = 86_400_000L
+    val segExpired =
+      com.example.model.RecordedSegmentInfo(
+        id = "1",
+        slotIndex = 0,
+        fileName = "cam1_old_sd.mp4",
+        uriString = "file:///cam1_old_sd.mp4",
+        sizeBytes = 50L * 1024L * 1024L,
+        createdAtMs = now - 3 * dayMs,
+      )
+    val segOldValid =
+      com.example.model.RecordedSegmentInfo(
+        id = "2",
+        slotIndex = 0,
+        fileName = "cam1_mid_sd.mp4",
+        uriString = "file:///cam1_mid_sd.mp4",
+        sizeBytes = 60L * 1024L * 1024L,
+        createdAtMs = now - 10_000L,
+      )
+    val segNewest =
+      com.example.model.RecordedSegmentInfo(
+        id = "3",
+        slotIndex = 0,
+        fileName = "cam1_new_sd.mp4",
+        uriString = "file:///cam1_new_sd.mp4",
+        sizeBytes = 60L * 1024L * 1024L,
+        createdAtMs = now - 5_000L,
+      )
+    val segActive =
+      com.example.model.RecordedSegmentInfo(
+        id = "4",
+        slotIndex = 0,
+        fileName = "cam1_active_sd.mp4",
+        uriString = "file:///cam1_active_sd.mp4",
+        sizeBytes = 50L * 1024L * 1024L,
+        createdAtMs = now - 1_000L,
+        isCurrentlyRecording = true,
+      )
+
+    val deleted =
+      com.example.model.RecordingRetentionPolicy.planFilesToDeleteForRingBuffer(
+        segments = listOf(segExpired, segOldValid, segNewest, segActive),
+        maxStorageBytes = 100L * 1024L * 1024L,
+        retentionDays = 2,
+        nowMs = now,
+      )
+    // segExpired removed by 2-day retention; segOldValid removed so remaining (60MB) <= 100MB; segActive never touched
+    assertEquals(listOf("1", "2"), deleted.map { it.id })
+  }
+
+  @Test
+  fun motionDetectionMath_triggersAboveThresholdAccordingToSensitivity() {
+    val staticFrameA = ByteArray(64 * 36) { 100.toByte() }
+    val staticFrameB = ByteArray(64 * 36) { 105.toByte() }
+    assertFalse(com.example.model.MotionDetectionMath.isMotionDetected(staticFrameA, staticFrameB, 90))
+
+    val smallMotionFrame =
+      ByteArray(64 * 36) { idx -> if (idx < 70) 200.toByte() else 100.toByte() } // ~3.0% changed
+    assertFalse(com.example.model.MotionDetectionMath.isMotionDetected(staticFrameA, smallMotionFrame, 25))
+    assertTrue(com.example.model.MotionDetectionMath.isMotionDetected(staticFrameA, smallMotionFrame, 85))
+    assertEquals(
+      1,
+      com.example.model.RecordingRetentionPolicy.normalizeMotionDurationMinutes(1),
+    )
+    assertEquals(
+      5,
+      com.example.model.RecordingRetentionPolicy.normalizeMotionDurationMinutes(5),
+    )
+  }
+
+  @Test
+  fun recordingStorageLocation_normalizesToUnsetOrLocalOrExternalSd() {
+    assertEquals(
+      "Místní úložiště",
+      com.example.model.RecordingStorageLocation.APP_EXTERNAL_PRIMARY.labelFor(com.example.model.AppLanguage.CS),
+    )
+    assertEquals(
+      "Externí úložiště (karta SD)",
+      com.example.model.RecordingStorageLocation.SD_CARD_APP.labelFor(com.example.model.AppLanguage.CS),
+    )
+    assertEquals(
+      com.example.model.RecordingStorageLocation.UNSET,
+      com.example.model.RecordingStorageLocation.fromId(null),
+    )
+    assertEquals(
+      com.example.model.RecordingStorageLocation.APP_EXTERNAL_PRIMARY,
+      com.example.model.RecordingStorageLocation.fromId("app_external"),
+    )
+    assertEquals(
+      com.example.model.RecordingStorageLocation.SD_CARD_APP,
+      com.example.model.RecordingStorageLocation.fromId("sd_card"),
+    )
+
+    val defaultStorage = com.example.model.RecordingStorageSettings()
+    assertEquals(com.example.model.RecordingStorageLocation.UNSET, defaultStorage.locationType)
+    assertFalse(defaultStorage.isFolderConfigured)
+
+    val configuredLocal =
+      com.example.model.RecordingStorageSettings(
+        locationTypeId = com.example.model.RecordingStorageLocation.APP_EXTERNAL_PRIMARY.id,
+        customTreeUri = "content://com.android.externalstorage.documents/tree/primary%3AMovies",
+        customFolderLabel = "Movies",
+      )
+    assertTrue(configuredLocal.isFolderConfigured)
+  }
+
+  @Test
+  fun tuyaSmartLifeBridge_buildsOpenApiAndAppAccountUrlsAndYaml() {
+    val openApiUrl =
+      com.example.data.Go2RtcClient.buildTuyaSourceUrl(
+        region = com.example.data.TuyaRegion.EU,
+        authMode = com.example.data.TuyaAuthMode.CLOUD_OPENAPI,
+        deviceId = "bf123456",
+        uid = "eu16900",
+        clientId = "cid_abc",
+        clientSecret = "sec_xyz",
+        useSubStream = true,
+      )
+    assertEquals(
+      "tuya://openapi.tuyaeu.com?device_id=bf123456&uid=eu16900&client_id=cid_abc&client_secret=sec_xyz&resolution=sd",
+      openApiUrl,
+    )
+
+    val appUrl =
+      com.example.data.Go2RtcClient.buildTuyaSourceUrl(
+        region = com.example.data.TuyaRegion.US,
+        authMode = com.example.data.TuyaAuthMode.APP_ACCOUNT,
+        deviceId = "dev99",
+        email = "user@example.com",
+        password = "p@ss",
+        useSubStream = false,
+      )
+    assertEquals(
+      "tuya://protect-us.ismartlife.me?device_id=dev99&email=user%40example.com&password=p%40ss",
+      appUrl,
+    )
+
+    val yaml =
+      com.example.data.Go2RtcClient.buildTuyaGo2RtcYaml(
+        streamName = "Vchod SmartLife!",
+        region = com.example.data.TuyaRegion.EU,
+        authMode = com.example.data.TuyaAuthMode.CLOUD_OPENAPI,
+        deviceId = "bf123",
+        uid = "u1",
+        clientId = "c1",
+        clientSecret = "s1",
+      )
+    assertTrue(yaml.contains("vchod_smartlife: tuya://openapi.tuyaeu.com?device_id=bf123"))
+  }
 }
 

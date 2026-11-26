@@ -3,6 +3,7 @@ package com.example.ui.components
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -10,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -23,6 +25,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -30,6 +33,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.BookmarkAdd
 import androidx.compose.material.icons.rounded.Brightness6
@@ -39,20 +43,26 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.FiberManualRecord
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Radar
 import androidx.compose.material.icons.rounded.Radio
+import androidx.compose.material.icons.rounded.SdStorage
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SettingsEthernet
 import androidx.compose.material.icons.rounded.Timer
+import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material.icons.rounded.WbSunny
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -89,10 +99,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.data.Go2RtcBridgeSourceType
 import com.example.data.Go2RtcClient
+import com.example.data.TuyaAuthMode
+import com.example.data.TuyaRegion
 import com.example.model.AppLanguage
 import com.example.model.AppearanceSettings
 import com.example.model.BatteryRuntimeStatus
+import com.example.model.CameraRecordingRuntimeStatus
 import com.example.model.CameraSlot
 import com.example.model.DiscoveredNetworkCamera
 import com.example.model.DisplayRuntimeStatus
@@ -100,6 +114,13 @@ import com.example.model.DisplaySettings
 import com.example.model.FavoriteRadioStation
 import com.example.model.NvrProtocolPreset
 import com.example.model.RadioDirectoryStation
+import com.example.model.RecordedSegmentInfo
+import com.example.model.RecordingMode
+import com.example.model.RecordingQuality
+import com.example.model.RecordingRetentionPolicy
+import com.example.model.RecordingStorageLocation
+import com.example.model.RecordingStorageSettings
+import com.example.model.RecordingStorageStats
 import com.example.model.RtspPathPreset
 import com.example.model.WeatherLocation
 import com.example.model.WeatherMetricToggle
@@ -117,6 +138,7 @@ import com.example.ui.theme.LocalWeatherGraphPalette
 import com.example.ui.theme.MenuBlue
 import com.example.ui.theme.MenuBlueBright
 import com.example.ui.theme.OfflineRed
+import com.example.ui.theme.TempAmber
 import com.example.ui.theme.tr
 
 @Composable
@@ -134,6 +156,8 @@ fun SettingsOverlay(
   isSearchingLocations: Boolean,
   locationSearchError: String?,
   cameras: List<CameraSlot>,
+  cameraDisplayCount: Int = 4,
+  onSelectCameraDisplayCount: (Int) -> Unit = {},
   discoveredCameras: List<DiscoveredNetworkCamera>,
   isScanningOnvif: Boolean,
   onvifStatusMessage: String?,
@@ -151,6 +175,7 @@ fun SettingsOverlay(
   onConnectManualNvr: (String, NvrProtocolPreset, Int, String, String, List<Int>, (Boolean, String) -> Unit) -> Unit,
   onImportFromGo2Rtc: (String, Int, Int, (Boolean, String) -> Unit) -> Unit,
   onRegisterEseeCloudInGo2Rtc: (String, Int, Int, String, Int, String, String, List<Int>, Int, (Boolean, String) -> Unit) -> Unit,
+  onRegisterTuyaInGo2Rtc: (String, Int, Int, Int, String, TuyaRegion, TuyaAuthMode, String, String, String, String, String, String, Boolean, (Boolean, String) -> Unit) -> Unit = { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> },
   onSaveCameraSlot: (CameraSlot) -> Unit,
   onClearCameraSlot: (Int) -> Unit,
   onMoveCameraSlot: (Int, Int) -> Unit,
@@ -169,6 +194,16 @@ fun SettingsOverlay(
   appearanceSettings: AppearanceSettings = AppearanceSettings(),
   batteryStatus: BatteryRuntimeStatus = BatteryRuntimeStatus(),
   onUpdateAppearanceSettings: ((AppearanceSettings) -> AppearanceSettings) -> Unit = {},
+  recordingStorageSettings: RecordingStorageSettings = RecordingStorageSettings(),
+  recordingStatuses: Map<Int, CameraRecordingRuntimeStatus> = emptyMap(),
+  recordedSegments: List<RecordedSegmentInfo> = emptyList(),
+  recordingStorageStats: RecordingStorageStats = RecordingStorageStats(),
+  onSelectRecordingStorageLocation: (RecordingStorageLocation) -> Unit = {},
+  onSelectCustomSafFolder: (Uri, String) -> Unit = { _, _ -> },
+  onSelectRecordingFolder: (RecordingStorageLocation, Uri, String) -> Unit = { _, uri, label -> onSelectCustomSafFolder(uri, label) },
+  onRefreshRecordings: () -> Unit = {},
+  onDeleteRecordedSegment: (RecordedSegmentInfo) -> Unit = {},
+  onClearCameraRecordings: (Int) -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   BackHandler(onBack = onClose)
@@ -181,8 +216,9 @@ fun SettingsOverlay(
   var showDiscoveryDialog by remember { mutableStateOf(false) }
   var showNvrDialog by remember { mutableStateOf(false) }
   var showGo2RtcDialog by remember { mutableStateOf(false) }
+  var showRecordingArchiveDialog by remember { mutableStateOf(false) }
 
-  Box(
+  BoxWithConstraints(
     modifier =
       modifier
         .fillMaxSize()
@@ -195,16 +231,20 @@ fun SettingsOverlay(
             }
           }
         }
-        .padding(12.dp)
         .testTag("settings_overlay")
   ) {
+    val isCompactScreen = maxWidth < 680.dp || maxHeight < 380.dp
+    val outerPad = if (isCompactScreen) 5.dp else 12.dp
+    val innerPad = if (isCompactScreen) 7.dp else 10.dp
+
     Column(
       modifier =
         Modifier.fillMaxSize()
+          .padding(outerPad)
           .clip(RoundedCornerShape(14.dp))
           .background(palette.surface)
           .border(1.dp, palette.surfaceBorder, RoundedCornerShape(14.dp))
-          .padding(10.dp)
+          .padding(innerPad)
     ) {
       // Top Settings Header Bar
       Row(
@@ -371,9 +411,15 @@ fun SettingsOverlay(
         1 -> {
           CameraSettingsTab(
             cameras = cameras,
+            cameraDisplayCount = cameraDisplayCount,
+            onSelectCameraDisplayCount = onSelectCameraDisplayCount,
             discoveredCount = discoveredCameras.size,
             isScanning = isScanningOnvif,
             statusMessage = onvifStatusMessage,
+            recordingStorageSettings = recordingStorageSettings,
+            recordingStatuses = recordingStatuses,
+            recordedSegmentsCount = recordedSegments.size,
+            recordingStorageStats = recordingStorageStats,
             onOpenDiscoveryDialog = {
               onUserActivity()
               showDiscoveryDialog = true
@@ -388,6 +434,11 @@ fun SettingsOverlay(
             onOpenGo2RtcDialog = {
               onUserActivity()
               showGo2RtcDialog = true
+            },
+            onOpenRecordingArchiveDialog = {
+              onUserActivity()
+              onRefreshRecordings()
+              showRecordingArchiveDialog = true
             },
             onEditSlot = { slot ->
               onUserActivity()
@@ -497,6 +548,27 @@ fun SettingsOverlay(
         },
         onImportStreams = onImportFromGo2Rtc,
         onRegisterEseeCloud = onRegisterEseeCloudInGo2Rtc,
+        onRegisterTuya = onRegisterTuyaInGo2Rtc,
+      )
+    }
+
+    if (showRecordingArchiveDialog) {
+      RecordingArchiveDialog(
+        cameras = cameras,
+        storageSettings = recordingStorageSettings,
+        storageStats = recordingStorageStats,
+        recordedSegments = recordedSegments,
+        onUserActivity = onUserActivity,
+        onSelectStorageLocation = onSelectRecordingStorageLocation,
+        onSelectCustomSafFolder = onSelectCustomSafFolder,
+        onSelectFolderForLocation = onSelectRecordingFolder,
+        onRefreshRecordings = onRefreshRecordings,
+        onDeleteSegment = onDeleteRecordedSegment,
+        onClearCameraRecordings = onClearCameraRecordings,
+        onDismiss = {
+          onUserActivity()
+          showRecordingArchiveDialog = false
+        },
       )
     }
   }
@@ -620,49 +692,71 @@ private fun AladinSettingsTab(
           .border(1.dp, palette.surfaceBorder, RoundedCornerShape(10.dp))
           .padding(10.dp)
     ) {
-      // Provider Selector Row
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-      ) {
-        Icon(Icons.Rounded.Public, contentDescription = null, tint = palette.accentBright, modifier = Modifier.size(16.dp))
-        Text(
-          text = tr(lang, "Poskytovatel dat:", "Data provider:"),
-          style = MaterialTheme.typography.labelMedium,
-          color = DashTextPrimary,
-          fontWeight = FontWeight.SemiBold,
-        )
-        Row(
-          modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
+      // Provider Dropdown Menu Button
+      var providerMenuExpanded by remember { mutableStateOf(false) }
+      Box(modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(
+          onClick = {
+            onUserActivity()
+            providerMenuExpanded = true
+          },
+          border = androidx.compose.foundation.BorderStroke(1.dp, palette.accentBright.copy(alpha = 0.65f)),
+          colors = ButtonDefaults.outlinedButtonColors(containerColor = palette.surface),
+          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+          modifier = Modifier.fillMaxWidth().height(48.dp).testTag("weather_provider_button"),
+        ) {
+          Icon(
+            imageVector = Icons.Rounded.Public,
+            contentDescription = null,
+            tint = palette.accentBright,
+            modifier = Modifier.size(18.dp),
+          )
+          Spacer(Modifier.width(8.dp))
+          Text(
+            text = "${tr(lang, "Poskytovatel", "Provider")}: ${weatherProvider.labelFor(lang)}",
+            style = MaterialTheme.typography.labelLarge,
+            color = DashTextPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+          )
+          Icon(
+            imageVector = Icons.Rounded.ArrowDropDown,
+            contentDescription = tr(lang, "Vybrat poskytovatele dat", "Select weather provider"),
+            tint = palette.accentBright,
+            modifier = Modifier.size(22.dp),
+          )
+        }
+
+        DropdownMenu(
+          expanded = providerMenuExpanded,
+          onDismissRequest = { providerMenuExpanded = false },
+          modifier = Modifier.background(palette.surfaceElevated),
         ) {
           WeatherProvider.entries.forEach { provider ->
             val selected = weatherProvider == provider
-            FilterChip(
-              selected = selected,
+            DropdownMenuItem(
+              text = {
+                Text(
+                  text = provider.labelFor(lang),
+                  style = MaterialTheme.typography.bodyMedium,
+                  fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                  color = if (selected) palette.accentBright else DashTextPrimary,
+                )
+              },
+              leadingIcon = {
+                Icon(
+                  imageVector = if (selected) Icons.Rounded.Check else Icons.Rounded.Public,
+                  contentDescription = null,
+                  tint = if (selected) palette.accentBright else DashTextSecondary,
+                  modifier = Modifier.size(18.dp),
+                )
+              },
               onClick = {
                 onUserActivity()
                 onSelectWeatherProvider(provider)
+                providerMenuExpanded = false
               },
-              label = {
-                Text(
-                  text = provider.labelFor(lang),
-                  style = MaterialTheme.typography.labelSmall,
-                  maxLines = 1,
-                )
-              },
-              leadingIcon =
-                if (selected) {
-                  { Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
-                } else null,
-              colors =
-                FilterChipDefaults.filterChipColors(
-                  selectedContainerColor = palette.accent,
-                  selectedLabelColor = Color.White,
-                  containerColor = palette.surface,
-                  labelColor = DashTextSecondary,
-                ),
               modifier = Modifier.testTag("weather_provider_${provider.id}"),
             )
           }
@@ -1002,12 +1096,19 @@ private fun MetricToggleRow(
 @Composable
 private fun CameraSettingsTab(
   cameras: List<CameraSlot>,
+  cameraDisplayCount: Int,
+  onSelectCameraDisplayCount: (Int) -> Unit,
   discoveredCount: Int,
   isScanning: Boolean,
   statusMessage: String?,
+  recordingStorageSettings: RecordingStorageSettings,
+  recordingStatuses: Map<Int, CameraRecordingRuntimeStatus>,
+  recordedSegmentsCount: Int,
+  recordingStorageStats: RecordingStorageStats,
   onOpenDiscoveryDialog: () -> Unit,
   onOpenNvrDialog: () -> Unit,
   onOpenGo2RtcDialog: () -> Unit,
+  onOpenRecordingArchiveDialog: () -> Unit,
   onEditSlot: (CameraSlot) -> Unit,
   onClearSlot: (Int) -> Unit,
   onMoveSlot: (Int, Int) -> Unit,
@@ -1016,7 +1117,7 @@ private fun CameraSettingsTab(
   val lang = LocalAppLanguage.current
   val palette = LocalDashPalette.current
   Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-    // Left column: Fullscreen Network Discovery launch + NVR/go2rtc actions
+    // Left column: Fullscreen Network Discovery launch + NVR/go2rtc + Storage & Recordings actions
     Column(
       modifier =
         Modifier.weight(0.95f)
@@ -1084,6 +1185,56 @@ private fun CameraSettingsTab(
         }
       }
 
+      // Recording Storage Location & Recorded MP4 Archive Entry
+      OutlinedButton(
+        onClick = onOpenRecordingArchiveDialog,
+        border = androidx.compose.foundation.BorderStroke(1.dp, palette.accentBright.copy(alpha = 0.65f)),
+        colors = ButtonDefaults.outlinedButtonColors(containerColor = palette.surface),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+        modifier = Modifier.fillMaxWidth().height(54.dp).testTag("open_recording_archive_button"),
+      ) {
+        Icon(
+          imageVector = Icons.Rounded.VideoLibrary,
+          contentDescription = null,
+          tint = OfflineRed,
+          modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+          Text(
+            text = "${tr(lang, "Místo ukládání záznamů", "Recording Storage Location")} ($recordedSegmentsCount)",
+            style = MaterialTheme.typography.labelLarge,
+            color = DashTextPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+            text =
+              if (!recordingStorageSettings.isFolderConfigured) {
+                tr(
+                  lang,
+                  "Složka není vybrána – klepněte pro výběr úložiště",
+                  "No folder selected – tap to choose storage",
+                )
+              } else {
+                val folderSuffix =
+                  recordingStorageStats.resolvedPathLabel
+                    .takeIf { it.isNotBlank() }
+                    ?.let { " ($it)" }
+                    .orEmpty()
+                "${recordingStorageSettings.locationType.labelFor(lang)}$folderSuffix · " +
+                  "${RecordingRetentionPolicy.formatBytes(recordingStorageStats.usedByAppBytes)} / " +
+                  "${tr(lang, "Volné", "Free")} ${RecordingRetentionPolicy.formatBytes(recordingStorageStats.availableFreeBytes)}"
+              },
+            style = MaterialTheme.typography.labelSmall,
+            color = if (!recordingStorageSettings.isFolderConfigured) TempAmber else DashTextSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+        Icon(Icons.Rounded.SdStorage, contentDescription = null, tint = palette.accentBright, modifier = Modifier.size(18.dp))
+      }
+
       if (!statusMessage.isNullOrBlank()) {
         Box(
           modifier =
@@ -1112,7 +1263,55 @@ private fun CameraSettingsTab(
           .border(1.dp, palette.surfaceBorder, RoundedCornerShape(10.dp))
           .padding(10.dp)
     ) {
-      Text(tr(lang, "Uspořádání kamer (1–4)", "Camera slots (1–4)"), style = MaterialTheme.typography.titleMedium, color = DashTextPrimary)
+      Text(
+        text = tr(lang, "Počet kamer na úvodní obrazovce", "Cameras on home screen"),
+        style = MaterialTheme.typography.titleMedium,
+        color = DashTextPrimary,
+      )
+      Spacer(Modifier.height(6.dp))
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        listOf(1, 2, 4).forEach { count ->
+          val isSelected = cameraDisplayCount == count
+          val label =
+            when (count) {
+              1 -> tr(lang, "1 kamera", "1 camera")
+              2 -> tr(lang, "2 kamery", "2 cameras")
+              else -> tr(lang, "4 kamery", "4 cameras")
+            }
+          Box(
+            modifier =
+              Modifier.weight(1f)
+                .height(48.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (isSelected) palette.accent else palette.surface)
+                .border(
+                  1.dp,
+                  if (isSelected) palette.accentBright else palette.surfaceBorder,
+                  RoundedCornerShape(8.dp),
+                )
+                .clickable { onSelectCameraDisplayCount(count) }
+                .testTag("camera_count_$count"),
+            contentAlignment = Alignment.Center,
+          ) {
+            Text(
+              text = label,
+              style = MaterialTheme.typography.labelLarge,
+              color = if (isSelected) Color.White else DashTextPrimary,
+              fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+              maxLines = 1,
+            )
+          }
+        }
+      }
+      Spacer(Modifier.height(8.dp))
+      Text(
+        text = tr(lang, "Uspořádání kamer (1–4)", "Camera slots (1–4)"),
+        style = MaterialTheme.typography.labelLarge,
+        color = DashTextSecondary,
+      )
       Spacer(Modifier.height(6.dp))
 
       LazyColumn(
@@ -1120,12 +1319,20 @@ private fun CameraSettingsTab(
         verticalArrangement = Arrangement.spacedBy(6.dp),
       ) {
         items(cameras, key = { it.slotIndex }) { slot ->
+          val isVisibleOnDashboard = slot.slotIndex < cameraDisplayCount
           Row(
             modifier =
               Modifier.fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp))
-                .background(palette.surface)
-                .border(1.dp, palette.surfaceBorder, RoundedCornerShape(8.dp))
+                .background(
+                  if (isVisibleOnDashboard) palette.surface
+                  else palette.surface.copy(alpha = 0.55f)
+                )
+                .border(
+                  1.dp,
+                  if (isVisibleOnDashboard) palette.surfaceBorder else palette.surfaceBorder.copy(alpha = 0.45f),
+                  RoundedCornerShape(8.dp),
+                )
                 .clickable { onEditSlot(slot) }
                 .padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1135,28 +1342,73 @@ private fun CameraSettingsTab(
               modifier =
                 Modifier.size(28.dp)
                   .clip(RoundedCornerShape(6.dp))
-                  .background(if (slot.isConfigured) palette.accent else palette.surfaceElevated),
+                  .background(
+                    when {
+                      !isVisibleOnDashboard -> palette.surfaceElevated.copy(alpha = 0.6f)
+                      slot.isConfigured -> palette.accent
+                      else -> palette.surfaceElevated
+                    }
+                  ),
               contentAlignment = Alignment.Center,
             ) {
               Text(
                 text = "${slot.slotIndex + 1}",
                 style = MaterialTheme.typography.labelMedium,
-                color = Color.White,
+                color = if (isVisibleOnDashboard) Color.White else DashTextMuted,
                 fontWeight = FontWeight.Bold,
               )
             }
 
+            val recRuntime = recordingStatuses[slot.slotIndex]
             Column(modifier = Modifier.weight(1f)) {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                Text(
+                  text = slot.name,
+                  style = MaterialTheme.typography.bodyLarge,
+                  color = if (isVisibleOnDashboard) DashTextPrimary else DashTextSecondary,
+                  fontWeight = FontWeight.SemiBold,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                  modifier = Modifier.weight(1f, fill = false),
+                )
+                if (!isVisibleOnDashboard) {
+                  Text(
+                    text = tr(lang, "Skrytá", "Hidden"),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = DashTextMuted,
+                    fontSize = 10.sp,
+                  )
+                }
+                if (slot.recordingEnabled) {
+                  val modeShort =
+                    if (slot.recordingMode == RecordingMode.MOTION_EVENTS) {
+                      "${tr(lang, "POHYB", "MOT")} ${slot.motionEventDurationMinutes}m"
+                    } else {
+                      "REC 15m"
+                    }
+                  Text(
+                    text = "$modeShort · ${slot.recordingQuality.id.uppercase()}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (recRuntime?.isRecording == true) OfflineRed else TempAmber,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp,
+                  )
+                }
+              }
               Text(
-                text = slot.name,
-                style = MaterialTheme.typography.bodyLarge,
-                color = DashTextPrimary,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-              )
-              Text(
-                text = slot.maskedUrlDisplay(lang),
+                text =
+                  if (slot.recordingEnabled) {
+                    val usedText =
+                      recRuntime?.usedBytes?.takeIf { it > 0L }?.let {
+                        " · ${RecordingRetentionPolicy.formatBytes(it)}"
+                      }.orEmpty()
+                    "${slot.maskedUrlDisplay(lang)}$usedText"
+                  } else {
+                    slot.maskedUrlDisplay(lang)
+                  },
                 style = MaterialTheme.typography.labelSmall,
                 color = if (slot.isConfigured) LiveEmerald else DashTextMuted,
                 maxLines = 1,
@@ -1202,6 +1454,11 @@ private fun CameraSettingsTab(
   }
 }
 
+private enum class CameraConnectionMode {
+  RTSP,
+  IP_CAMERA,
+}
+
 @Composable
 private fun CameraEditDialog(
   slot: CameraSlot,
@@ -1210,18 +1467,40 @@ private fun CameraEditDialog(
   onSave: (CameraSlot) -> Unit,
 ) {
   val lang = LocalAppLanguage.current
+  val palette = LocalDashPalette.current
+
+  val initiallyHttp =
+    slot.streamUrl.trim().startsWith("http://", ignoreCase = true) ||
+      slot.streamUrl.trim().startsWith("https://", ignoreCase = true)
+
+  var connectionMode by remember {
+    mutableStateOf(if (initiallyHttp) CameraConnectionMode.IP_CAMERA else CameraConnectionMode.RTSP)
+  }
+  var useHttps by remember {
+    mutableStateOf(slot.streamUrl.trim().startsWith("https://", ignoreCase = true))
+  }
   var name by remember { mutableStateOf(slot.name) }
   var ipAddress by remember {
     mutableStateOf(CameraSlot.extractHost(slot.streamUrl, slot.onvifDeviceAddress))
   }
   var portText by remember {
-    mutableStateOf(CameraSlot.extractPort(slot.streamUrl, CameraSlot.DEFAULT_MANUAL_RTSP_PORT.toString()))
+    mutableStateOf(
+      CameraSlot.extractPort(
+        slot.streamUrl,
+        if (initiallyHttp) "80" else CameraSlot.DEFAULT_MANUAL_RTSP_PORT.toString(),
+      )
+    )
   }
   var selectedChannel by remember {
     mutableIntStateOf(CameraSlot.extractChannelZeroBased(slot.streamUrl, slot.slotIndex))
   }
   var selectedQuality by remember {
     mutableIntStateOf(CameraSlot.extractStreamQualityIndex(slot.streamUrl, 0))
+  }
+  var ipEndpointPath by remember {
+    mutableStateOf(
+      if (initiallyHttp) CameraSlot.extractPath(slot.streamUrl, "/video") else "/video"
+    )
   }
   var url by remember { mutableStateOf(slot.streamUrl) }
   var username by remember {
@@ -1232,22 +1511,46 @@ private fun CameraEditDialog(
   }
   var password by remember { mutableStateOf(slot.password) }
 
+  // Per-camera Recording & Motion Event Configuration State (edited in Nahrávání submenu)
+  var showRecordingSubmenu by remember { mutableStateOf(false) }
+  var recordingEnabled by remember { mutableStateOf(slot.recordingEnabled) }
+  var recordingMode by remember { mutableStateOf(slot.recordingMode) }
+  var recordingQuality by remember { mutableStateOf(slot.recordingQuality) }
+  var recordingMaxSizeMb by remember { mutableIntStateOf(slot.recordingMaxSizeMb) }
+  var recordingRetentionDays by remember { mutableIntStateOf(slot.recordingRetentionDays) }
+  var motionSensitivity by remember {
+    mutableIntStateOf(RecordingRetentionPolicy.normalizeMotionSensitivity(slot.motionSensitivity))
+  }
+  var motionDurationMinutes by remember {
+    mutableIntStateOf(
+      RecordingRetentionPolicy.normalizeMotionDurationMinutes(slot.motionEventDurationMinutes)
+    )
+  }
+
   fun defaultChannelPath(): String = "/ch${selectedChannel}_${selectedQuality}.264"
 
   fun rebuildUrlFromIpAndPort(
     newIp: String = ipAddress,
     newPort: String = portText,
     overridePath: String? = null,
-    isHttp: Boolean = url.trim().startsWith("http", ignoreCase = true) && overridePath == null,
+    targetMode: CameraConnectionMode = connectionMode,
+    httpsFlag: Boolean = useHttps,
   ) {
+    val isHttpMode = targetMode == CameraConnectionMode.IP_CAMERA
     val activePath =
-      overridePath ?: CameraSlot.extractPath(url, defaultChannelPath())
+      overridePath
+        ?: if (isHttpMode) {
+          ipEndpointPath.ifBlank { "/video" }
+        } else {
+          CameraSlot.extractPath(url, defaultChannelPath())
+        }
     url =
       CameraSlot.buildManualStreamUrl(
         ipAddress = newIp,
         portText = newPort,
         path = activePath,
-        isHttp = isHttp,
+        isHttp = isHttpMode,
+        useHttps = isHttpMode && httpsFlag,
       )
   }
 
@@ -1257,8 +1560,10 @@ private fun CameraEditDialog(
   ) {
     Surface(
       modifier =
-        Modifier.fillMaxWidth(0.86f)
-          .fillMaxHeight(0.84f)
+        Modifier.fillMaxWidth(0.95f)
+          .widthIn(max = 920.dp)
+          .fillMaxHeight(0.92f)
+          .heightIn(max = 580.dp)
           .imePadding()
           .pointerInput(Unit) {
             awaitPointerEventScope {
@@ -1274,29 +1579,154 @@ private fun CameraEditDialog(
     ) {
       Column(
         modifier = Modifier.fillMaxSize().padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
       ) {
         Row(
           modifier = Modifier.fillMaxWidth(),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-          Column {
+          Column(modifier = Modifier.weight(1f)) {
             Text(
               tr(lang, "Upravit kameru ${slot.slotIndex + 1}", "Edit camera ${slot.slotIndex + 1}"),
               style = MaterialTheme.typography.titleMedium,
               color = DashTextPrimary,
             )
             Text(
-              tr(
-                lang,
-                "Ruční RTSP: stačí vyplnit IP adresu a kanál (výchozí port 80, jméno admin, bez hesla)",
-                "Manual RTSP: just enter IP address and channel (default port 80, user admin, empty password)",
-              ),
+              if (connectionMode == CameraConnectionMode.IP_CAMERA) {
+                tr(
+                  lang,
+                  "Klasická IP kamera: zadejte IP/adresu a cestu (např. /video, /mjpeg, /snapshot.jpg)",
+                  "Classic IP camera: enter IP/address and endpoint (e.g. /video, /mjpeg, /snapshot.jpg)",
+                )
+              } else {
+                tr(
+                  lang,
+                  "Ruční RTSP: stačí vyplnit IP adresu a kanál (výchozí port 80, jméno admin, bez hesla)",
+                  "Manual RTSP: just enter IP address and channel (default port 80, user admin, empty password)",
+                )
+              },
               style = MaterialTheme.typography.labelSmall,
               color = DashTextSecondary,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
             )
           }
+
+          // Camera Mode Switcher + Nahrávání submenu button
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(horizontal = 8.dp).horizontalScroll(rememberScrollState()),
+          ) {
+            FilterChip(
+              selected = connectionMode == CameraConnectionMode.RTSP,
+              onClick = {
+                onUserActivity()
+                connectionMode = CameraConnectionMode.RTSP
+                useHttps = false
+                if (portText == "8080" || portText == "81" || portText == "443") {
+                  portText = CameraSlot.DEFAULT_MANUAL_RTSP_PORT.toString()
+                }
+                if (ipAddress.isNotBlank()) {
+                  rebuildUrlFromIpAndPort(
+                    overridePath = defaultChannelPath(),
+                    targetMode = CameraConnectionMode.RTSP,
+                    httpsFlag = false,
+                  )
+                } else if (url.startsWith("http", ignoreCase = true)) {
+                  url = ""
+                }
+              },
+              label = { Text("RTSP", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold) },
+              leadingIcon =
+                if (connectionMode == CameraConnectionMode.RTSP) {
+                  { Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(15.dp)) }
+                } else null,
+              colors =
+                FilterChipDefaults.filterChipColors(
+                  selectedContainerColor = palette.accent,
+                  selectedLabelColor = Color.White,
+                ),
+              modifier = Modifier.height(48.dp).testTag("camera_mode_rtsp"),
+            )
+            FilterChip(
+              selected = connectionMode == CameraConnectionMode.IP_CAMERA,
+              onClick = {
+                onUserActivity()
+                connectionMode = CameraConnectionMode.IP_CAMERA
+                if (ipAddress.isNotBlank()) {
+                  rebuildUrlFromIpAndPort(
+                    overridePath = ipEndpointPath.ifBlank { "/video" },
+                    targetMode = CameraConnectionMode.IP_CAMERA,
+                  )
+                } else if (url.startsWith("rtsp", ignoreCase = true)) {
+                  url = ""
+                }
+              },
+              label = {
+                Text(
+                  tr(lang, "Klasická IP kamera", "Classic IP Camera"),
+                  style = MaterialTheme.typography.labelMedium,
+                  fontWeight = FontWeight.SemiBold,
+                )
+              },
+              leadingIcon =
+                {
+                  Icon(
+                    imageVector = if (connectionMode == CameraConnectionMode.IP_CAMERA) Icons.Rounded.Check else Icons.Rounded.Language,
+                    contentDescription = null,
+                    modifier = Modifier.size(15.dp),
+                  )
+                },
+              colors =
+                FilterChipDefaults.filterChipColors(
+                  selectedContainerColor = palette.accent,
+                  selectedLabelColor = Color.White,
+                ),
+              modifier = Modifier.height(48.dp).testTag("camera_mode_ip"),
+            )
+            FilterChip(
+              selected = recordingEnabled,
+              onClick = {
+                onUserActivity()
+                showRecordingSubmenu = true
+              },
+              label = {
+                Text(
+                  text = tr(lang, "Nahrávání", "Recording"),
+                  style = MaterialTheme.typography.labelMedium,
+                  fontWeight = FontWeight.SemiBold,
+                  maxLines = 1,
+                )
+              },
+              leadingIcon =
+                {
+                  Icon(
+                    imageVector = Icons.Rounded.FiberManualRecord,
+                    contentDescription = null,
+                    tint = if (recordingEnabled) OfflineRed else DashTextMuted,
+                    modifier = Modifier.size(14.dp),
+                  )
+                },
+              colors =
+                FilterChipDefaults.filterChipColors(
+                  selectedContainerColor = OfflineRed.copy(alpha = 0.24f),
+                  selectedLabelColor = DashTextPrimary,
+                  containerColor = DashSurfaceElevated,
+                  labelColor = DashTextSecondary,
+                ),
+              border =
+                FilterChipDefaults.filterChipBorder(
+                  enabled = true,
+                  selected = recordingEnabled,
+                  selectedBorderColor = OfflineRed,
+                  borderColor = DashSurfaceBorder,
+                ),
+              modifier = Modifier.height(48.dp).testTag("camera_recording_submenu_button"),
+            )
+          }
+
           IconButton(onClick = onDismiss) {
             Icon(Icons.Rounded.Close, contentDescription = tr(lang, "Zavřít", "Close"), tint = DashTextSecondary)
           }
@@ -1306,11 +1736,40 @@ private fun CameraEditDialog(
           modifier = Modifier.weight(1f).fillMaxWidth(),
           horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-          // Left column
+          // Left column: Address fields, Credentials, Name, Full URL
           Column(
             modifier = Modifier.weight(1.1f).fillMaxHeight().verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp),
           ) {
+            if (connectionMode == CameraConnectionMode.IP_CAMERA) {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                Text(tr(lang, "Protokol:", "Protocol:"), style = MaterialTheme.typography.labelSmall, color = DashTextSecondary)
+                FilterChip(
+                  selected = !useHttps,
+                  onClick = {
+                    onUserActivity()
+                    useHttps = false
+                    if (portText == "443") portText = "80"
+                    if (ipAddress.isNotBlank()) rebuildUrlFromIpAndPort(httpsFlag = false)
+                  },
+                  label = { Text("HTTP", style = MaterialTheme.typography.labelSmall) },
+                )
+                FilterChip(
+                  selected = useHttps,
+                  onClick = {
+                    onUserActivity()
+                    useHttps = true
+                    if (portText == "80" || portText.isBlank()) portText = "443"
+                    if (ipAddress.isNotBlank()) rebuildUrlFromIpAndPort(httpsFlag = true)
+                  },
+                  label = { Text("HTTPS", style = MaterialTheme.typography.labelSmall) },
+                )
+              }
+            }
+
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
               OutlinedTextField(
                 value = ipAddress,
@@ -1319,7 +1778,15 @@ private fun CameraEditDialog(
                   ipAddress = it
                   rebuildUrlFromIpAndPort(newIp = it)
                 },
-                label = { Text(tr(lang, "IP adresa", "IP address")) },
+                label = {
+                  Text(
+                    if (connectionMode == CameraConnectionMode.IP_CAMERA) {
+                      tr(lang, "IP adresa / doména", "IP address / host")
+                    } else {
+                      tr(lang, "IP adresa", "IP address")
+                    }
+                  )
+                },
                 placeholder = { Text("192.168.1.50") },
                 singleLine = true,
                 colors = textFieldColors(),
@@ -1336,10 +1803,28 @@ private fun CameraEditDialog(
                   }
                 },
                 label = { Text("Port") },
-                placeholder = { Text("80") },
+                placeholder = { Text(if (connectionMode == CameraConnectionMode.IP_CAMERA) "8080" else "80") },
                 singleLine = true,
                 colors = textFieldColors(),
                 modifier = Modifier.weight(0.6f).testTag("camera_manual_port_input"),
+              )
+            }
+
+            if (connectionMode == CameraConnectionMode.IP_CAMERA) {
+              OutlinedTextField(
+                value = ipEndpointPath,
+                onValueChange = {
+                  onUserActivity()
+                  ipEndpointPath = it
+                  if (ipAddress.isNotBlank()) {
+                    rebuildUrlFromIpAndPort(overridePath = it)
+                  }
+                },
+                label = { Text(tr(lang, "Cesta IP kamery (např. /video, /snapshot.jpg)", "IP camera endpoint (e.g. /video, /snapshot.jpg)")) },
+                placeholder = { Text("/video") },
+                singleLine = true,
+                colors = textFieldColors(),
+                modifier = Modifier.fillMaxWidth().testTag("camera_ip_path_input"),
               )
             }
 
@@ -1387,22 +1872,49 @@ private fun CameraEditDialog(
               onValueChange = {
                 onUserActivity()
                 url = it
+                val trimmed = it.trim()
+                if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
+                  connectionMode = CameraConnectionMode.IP_CAMERA
+                  useHttps = trimmed.startsWith("https://", ignoreCase = true)
+                  ipEndpointPath = CameraSlot.extractPath(trimmed, ipEndpointPath)
+                } else if (trimmed.startsWith("rtsp://", ignoreCase = true)) {
+                  connectionMode = CameraConnectionMode.RTSP
+                  useHttps = false
+                }
                 val parsedHost = CameraSlot.extractHost(it)
                 if (parsedHost.isNotBlank()) ipAddress = parsedHost
                 val parsedPort = CameraSlot.extractPort(it, "")
                 if (parsedPort.isNotBlank()) portText = parsedPort
-                selectedChannel = CameraSlot.extractChannelZeroBased(it, selectedChannel)
-                selectedQuality = CameraSlot.extractStreamQualityIndex(it, selectedQuality)
+                if (connectionMode == CameraConnectionMode.RTSP) {
+                  selectedChannel = CameraSlot.extractChannelZeroBased(it, selectedChannel)
+                  selectedQuality = CameraSlot.extractStreamQualityIndex(it, selectedQuality)
+                }
               },
-              label = { Text(tr(lang, "RTSP nebo HTTP URL streamu", "RTSP or HTTP stream URL")) },
-              placeholder = { Text("rtsp://192.168.1.50:80/ch0_0.264") },
+              label = {
+                Text(
+                  if (connectionMode == CameraConnectionMode.IP_CAMERA) {
+                    tr(lang, "Kompletní adresa IP kamery (HTTP/HTTPS URL)", "Full IP camera address (HTTP/HTTPS URL)")
+                  } else {
+                    tr(lang, "RTSP URL streamu", "RTSP stream URL")
+                  }
+                )
+              },
+              placeholder = {
+                Text(
+                  if (connectionMode == CameraConnectionMode.IP_CAMERA) {
+                    "http://192.168.1.50:8080/video"
+                  } else {
+                    "rtsp://192.168.1.50:80/ch0_0.264"
+                  }
+                )
+              },
               singleLine = true,
               colors = textFieldColors(),
               modifier = Modifier.fillMaxWidth().testTag("camera_manual_url_input"),
             )
           }
 
-          // Right column: Manual RTSP preset + Channel K1-K8 + Stream quality + Templates
+          // Right column: Mode-specific presets & options
           Column(
             modifier =
               Modifier.weight(0.9f)
@@ -1414,147 +1926,206 @@ private fun CameraEditDialog(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp),
           ) {
-            OutlinedButton(
-              onClick = {
-                onUserActivity()
-                portText = CameraSlot.DEFAULT_MANUAL_RTSP_PORT.toString()
-                username = CameraSlot.DEFAULT_MANUAL_USERNAME
-                password = ""
-                if (ipAddress.isNotBlank()) {
-                  rebuildUrlFromIpAndPort(
-                    newIp = ipAddress,
-                    newPort = CameraSlot.DEFAULT_MANUAL_RTSP_PORT.toString(),
-                    overridePath = defaultChannelPath(),
-                    isHttp = false,
+            if (connectionMode == CameraConnectionMode.RTSP) {
+              OutlinedButton(
+                onClick = {
+                  onUserActivity()
+                  portText = CameraSlot.DEFAULT_MANUAL_RTSP_PORT.toString()
+                  username = CameraSlot.DEFAULT_MANUAL_USERNAME
+                  password = ""
+                  if (ipAddress.isNotBlank()) {
+                    rebuildUrlFromIpAndPort(
+                      newIp = ipAddress,
+                      newPort = CameraSlot.DEFAULT_MANUAL_RTSP_PORT.toString(),
+                      overridePath = defaultChannelPath(),
+                      targetMode = CameraConnectionMode.RTSP,
+                      httpsFlag = false,
+                    )
+                  }
+                },
+                modifier = Modifier.fillMaxWidth().height(48.dp).testTag("camera_manual_rtsp_preset_button"),
+              ) {
+                Text(
+                  tr(lang, "Výchozí RTSP (port 80, admin, bez hesla)", "Default RTSP (port 80, admin, no pass)"),
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MenuBlueBright,
+                )
+              }
+
+              Text(tr(lang, "Kanál NVR (K1–K8)", "NVR Channel (K1–K8)"), style = MaterialTheme.typography.labelMedium, color = DashTextPrimary)
+              Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                (0..7).forEach { ch ->
+                  FilterChip(
+                    selected = selectedChannel == ch,
+                    onClick = {
+                      onUserActivity()
+                      selectedChannel = ch
+                      url =
+                        CameraSlot.applyChannelAndQuality(
+                          streamUrl = url,
+                          fallbackIp = ipAddress,
+                          fallbackPort = portText,
+                          channelZeroBased = ch,
+                          qualityIndex = selectedQuality,
+                        )
+                      if (ipAddress.isBlank()) ipAddress = CameraSlot.extractHost(url)
+                    },
+                    label = { Text("K${ch + 1}", style = MaterialTheme.typography.labelSmall) },
                   )
                 }
-              },
-              modifier = Modifier.fillMaxWidth().height(48.dp).testTag("camera_manual_rtsp_preset_button"),
-            ) {
-              Text(
-                tr(lang, "Výchozí RTSP (port 80, admin, bez hesla)", "Default RTSP (port 80, admin, no pass)"),
-                style = MaterialTheme.typography.labelSmall,
-                color = MenuBlueBright,
-              )
-            }
+              }
 
-            Text(tr(lang, "Kanál NVR (K1–K8)", "NVR Channel (K1–K8)"), style = MaterialTheme.typography.labelMedium, color = DashTextPrimary)
-            Row(
-              modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-              horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-              (0..7).forEach { ch ->
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                Text("Stream:", style = MaterialTheme.typography.labelSmall, color = DashTextSecondary)
                 FilterChip(
-                  selected = selectedChannel == ch,
+                  selected = selectedQuality == 0,
                   onClick = {
                     onUserActivity()
-                    selectedChannel = ch
+                    selectedQuality = 0
                     url =
                       CameraSlot.applyChannelAndQuality(
                         streamUrl = url,
                         fallbackIp = ipAddress,
                         fallbackPort = portText,
-                        channelZeroBased = ch,
-                        qualityIndex = selectedQuality,
+                        channelZeroBased = selectedChannel,
+                        qualityIndex = 0,
                       )
                     if (ipAddress.isBlank()) ipAddress = CameraSlot.extractHost(url)
                   },
-                  label = { Text("K${ch + 1}", style = MaterialTheme.typography.labelSmall) },
+                  label = { Text(tr(lang, "Hlavní (_0)", "Main (_0)"), style = MaterialTheme.typography.labelSmall) },
                 )
-              }
-            }
-
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-              Text("Stream:", style = MaterialTheme.typography.labelSmall, color = DashTextSecondary)
-              FilterChip(
-                selected = selectedQuality == 0,
-                onClick = {
-                  onUserActivity()
-                  selectedQuality = 0
-                  url =
-                    CameraSlot.applyChannelAndQuality(
-                      streamUrl = url,
-                      fallbackIp = ipAddress,
-                      fallbackPort = portText,
-                      channelZeroBased = selectedChannel,
-                      qualityIndex = 0,
-                    )
-                  if (ipAddress.isBlank()) ipAddress = CameraSlot.extractHost(url)
-                },
-                label = { Text(tr(lang, "Hlavní (_0)", "Main (_0)"), style = MaterialTheme.typography.labelSmall) },
-              )
-              FilterChip(
-                selected = selectedQuality == 1,
-                onClick = {
-                  onUserActivity()
-                  selectedQuality = 1
-                  url =
-                    CameraSlot.applyChannelAndQuality(
-                      streamUrl = url,
-                      fallbackIp = ipAddress,
-                      fallbackPort = portText,
-                      channelZeroBased = selectedChannel,
-                      qualityIndex = 1,
-                    )
-                  if (ipAddress.isBlank()) ipAddress = CameraSlot.extractHost(url)
-                },
-                label = { Text(tr(lang, "Vedlejší (_1)", "Sub (_1)"), style = MaterialTheme.typography.labelSmall) },
-              )
-            }
-
-            Text(tr(lang, "Rychlé šablony cesty", "Quick path presets"), style = MaterialTheme.typography.labelMedium, color = DashTextPrimary)
-            Row(
-              modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-              horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-              val go2RtcPath = "/kam${selectedChannel + 1}"
-              FilterChip(
-                selected = url.endsWith(go2RtcPath),
-                onClick = {
-                  onUserActivity()
-                  val targetHost = ipAddress.ifBlank { "127.0.0.1" }
-                  val targetPort = if (ipAddress.isBlank() && portText == "80") "8554" else portText
-                  ipAddress = targetHost
-                  portText = targetPort
-                  url = CameraSlot.buildManualStreamUrl(targetHost, targetPort, go2RtcPath, isHttp = false)
-                },
-                label = { Text("go2rtc ($go2RtcPath)", style = MaterialTheme.typography.labelSmall) },
-              )
-              RtspPathPreset.CommonPresets.forEach { preset ->
-                val adjustedPresetPath =
-                  CameraSlot.extractPath(
-                    CameraSlot.applyChannelAndQuality(
-                      streamUrl = "rtsp://host:80${preset.path}",
-                      fallbackIp = "host",
-                      fallbackPort = "80",
-                      channelZeroBased = selectedChannel,
-                      qualityIndex = selectedQuality,
-                    ),
-                    preset.path,
-                  ).let { transformed ->
-                    if (preset.path == "/stream1" || preset.path == "/unicast" || preset.path == "/capture" || preset.path == "/h264Preview_01_sub") {
-                      preset.path
-                    } else {
-                      transformed
-                    }
-                  }
                 FilterChip(
-                  selected = url.endsWith(adjustedPresetPath),
+                  selected = selectedQuality == 1,
                   onClick = {
                     onUserActivity()
-                    val targetHost = ipAddress.ifBlank { "192.168.1.50" }
-                    val targetPort =
-                      if (preset.isHttp && preset.path == "/capture" && portText == "80") "81"
-                      else portText
-                    if (ipAddress.isBlank()) ipAddress = targetHost
-                    url = CameraSlot.buildManualStreamUrl(targetHost, targetPort, adjustedPresetPath, isHttp = preset.isHttp)
+                    selectedQuality = 1
+                    url =
+                      CameraSlot.applyChannelAndQuality(
+                        streamUrl = url,
+                        fallbackIp = ipAddress,
+                        fallbackPort = portText,
+                        channelZeroBased = selectedChannel,
+                        qualityIndex = 1,
+                      )
+                    if (ipAddress.isBlank()) ipAddress = CameraSlot.extractHost(url)
                   },
-                  label = { Text(preset.label, style = MaterialTheme.typography.labelSmall) },
+                  label = { Text(tr(lang, "Vedlejší (_1)", "Sub (_1)"), style = MaterialTheme.typography.labelSmall) },
                 )
+              }
+
+              Text(tr(lang, "Rychlé RTSP šablony", "Quick RTSP presets"), style = MaterialTheme.typography.labelMedium, color = DashTextPrimary)
+              Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                val go2RtcPath = "/kam${selectedChannel + 1}"
+                FilterChip(
+                  selected = url.endsWith(go2RtcPath),
+                  onClick = {
+                    onUserActivity()
+                    val targetHost = ipAddress.ifBlank { "127.0.0.1" }
+                    val targetPort = if (ipAddress.isBlank() && portText == "80") "8554" else portText
+                    ipAddress = targetHost
+                    portText = targetPort
+                    url = CameraSlot.buildManualStreamUrl(targetHost, targetPort, go2RtcPath, isHttp = false)
+                  },
+                  label = { Text("go2rtc ($go2RtcPath)", style = MaterialTheme.typography.labelSmall) },
+                )
+                RtspPathPreset.CommonPresets.filterNot { it.isHttp }.forEach { preset ->
+                  val adjustedPresetPath =
+                    CameraSlot.extractPath(
+                      CameraSlot.applyChannelAndQuality(
+                        streamUrl = "rtsp://host:80${preset.path}",
+                        fallbackIp = "host",
+                        fallbackPort = "80",
+                        channelZeroBased = selectedChannel,
+                        qualityIndex = selectedQuality,
+                      ),
+                      preset.path,
+                    ).let { transformed ->
+                      if (preset.path == "/stream1" || preset.path == "/unicast" || preset.path == "/h264Preview_01_sub") {
+                        preset.path
+                      } else {
+                        transformed
+                      }
+                    }
+                  FilterChip(
+                    selected = url.endsWith(adjustedPresetPath),
+                    onClick = {
+                      onUserActivity()
+                      val targetHost = ipAddress.ifBlank { "192.168.1.50" }
+                      if (ipAddress.isBlank()) ipAddress = targetHost
+                      url = CameraSlot.buildManualStreamUrl(targetHost, portText, adjustedPresetPath, isHttp = false)
+                    },
+                    label = { Text(preset.label, style = MaterialTheme.typography.labelSmall) },
+                  )
+                }
+              }
+            } else {
+              // Classic IP Camera (HTTP / HTTPS / MJPEG / Snapshot) presets
+              Text(
+                tr(lang, "Typické adresy IP kamer", "Common IP camera presets"),
+                style = MaterialTheme.typography.labelMedium,
+                color = DashTextPrimary,
+              )
+              Text(
+                tr(
+                  lang,
+                  "Podporuje živý MJPEG stream (/video, /mjpeg), HLS (.m3u8) i periodické snímky (.jpg, /capture).",
+                  "Supports live MJPEG video (/video, /mjpeg), HLS (.m3u8), and periodic snapshots (.jpg, /capture).",
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = DashTextSecondary,
+              )
+
+              RtspPathPreset.IpCameraPresets.chunked(2).forEach { pair ->
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                  pair.forEach { preset ->
+                    val isSelected = ipEndpointPath.equals(preset.path, ignoreCase = true)
+                    FilterChip(
+                      selected = isSelected,
+                      onClick = {
+                        onUserActivity()
+                        val targetHost = ipAddress.ifBlank { "192.168.1.50" }
+                        val targetPort = (preset.defaultPort ?: 80).toString()
+                        ipAddress = targetHost
+                        portText = targetPort
+                        ipEndpointPath = preset.path
+                        rebuildUrlFromIpAndPort(
+                          newIp = targetHost,
+                          newPort = targetPort,
+                          overridePath = preset.path,
+                          targetMode = CameraConnectionMode.IP_CAMERA,
+                        )
+                      },
+                      label = {
+                        Text(
+                          text = preset.label,
+                          style = MaterialTheme.typography.labelSmall,
+                          maxLines = 1,
+                          overflow = TextOverflow.Ellipsis,
+                        )
+                      },
+                      colors =
+                        FilterChipDefaults.filterChipColors(
+                          selectedContainerColor = palette.accent,
+                          selectedLabelColor = Color.White,
+                        ),
+                      modifier = Modifier.weight(1f),
+                    )
+                    }
+                  if (pair.size == 1) Spacer(Modifier.weight(1f))
+                }
               }
             }
           }
@@ -1573,14 +2144,23 @@ private fun CameraEditDialog(
           Spacer(Modifier.width(8.dp))
           Button(
             onClick = {
-              val resolvedUrl =
+              val isIpMode = connectionMode == CameraConnectionMode.IP_CAMERA
+              val rawOrBuilt =
                 url.trim().ifBlank {
                   CameraSlot.buildManualStreamUrl(
                     ipAddress = ipAddress,
                     portText = portText,
-                    path = defaultChannelPath(),
+                    path = if (isIpMode) ipEndpointPath.ifBlank { "/video" } else defaultChannelPath(),
+                    isHttp = isIpMode,
+                    useHttps = isIpMode && useHttps,
                   )
                 }
+              val resolvedUrl =
+                CameraSlot.normalizeManualUrl(
+                  rawInput = rawOrBuilt,
+                  defaultIsHttp = isIpMode,
+                  useHttps = isIpMode && useHttps,
+                )
               val resolvedHost = CameraSlot.extractHost(resolvedUrl, ipAddress)
               onSave(
                 slot.copy(
@@ -1589,6 +2169,16 @@ private fun CameraEditDialog(
                   username = username.trim(),
                   password = password,
                   onvifDeviceAddress = resolvedHost,
+                  protocolLabel =
+                    if (resolvedUrl.startsWith("http", ignoreCase = true)) "HTTP/IP"
+                    else "RTSP",
+                  recordingEnabled = recordingEnabled,
+                  recordingQualityId = recordingQuality.id,
+                  recordingMaxSizeMb = recordingMaxSizeMb,
+                  recordingRetentionDays = recordingRetentionDays,
+                  recordingModeId = recordingMode.id,
+                  motionSensitivity = motionSensitivity,
+                  motionEventDurationMinutes = motionDurationMinutes,
                 )
               )
             },
@@ -1599,6 +2189,35 @@ private fun CameraEditDialog(
           }
         }
       }
+    }
+
+    if (showRecordingSubmenu) {
+      CameraRecordingSubmenuDialog(
+        slotIndex = slot.slotIndex,
+        cameraName = name,
+        initialEnabled = recordingEnabled,
+        initialMode = recordingMode,
+        initialQuality = recordingQuality,
+        initialMaxSizeMb = recordingMaxSizeMb,
+        initialRetentionDays = recordingRetentionDays,
+        initialMotionSensitivity = motionSensitivity,
+        initialMotionDurationMinutes = motionDurationMinutes,
+        onUserActivity = onUserActivity,
+        onConfirm = { en, md, ql, maxMb, days, sens, durMin ->
+          recordingEnabled = en
+          recordingMode = md
+          recordingQuality = ql
+          recordingMaxSizeMb = maxMb
+          recordingRetentionDays = days
+          motionSensitivity = sens
+          motionDurationMinutes = durMin
+          showRecordingSubmenu = false
+        },
+        onDismiss = {
+          onUserActivity()
+          showRecordingSubmenu = false
+        },
+      )
     }
   }
 }
@@ -1642,8 +2261,10 @@ private fun NvrSetupDialog(
   ) {
     Surface(
       modifier =
-        Modifier.fillMaxWidth(0.86f)
-          .fillMaxHeight(0.84f)
+        Modifier.fillMaxWidth(0.95f)
+          .widthIn(max = 900.dp)
+          .fillMaxHeight(0.92f)
+          .heightIn(max = 560.dp)
           .imePadding()
           .pointerInput(Unit) {
             awaitPointerEventScope {
@@ -1920,6 +2541,7 @@ private fun Go2RtcBridgeDialog(
   onDismiss: () -> Unit,
   onImportStreams: (String, Int, Int, (Boolean, String) -> Unit) -> Unit,
   onRegisterEseeCloud: (String, Int, Int, String, Int, String, String, List<Int>, Int, (Boolean, String) -> Unit) -> Unit,
+  onRegisterTuya: (String, Int, Int, Int, String, TuyaRegion, TuyaAuthMode, String, String, String, String, String, String, Boolean, (Boolean, String) -> Unit) -> Unit,
 ) {
   val lang = LocalAppLanguage.current
   val palette = LocalDashPalette.current
@@ -1928,6 +2550,9 @@ private fun Go2RtcBridgeDialog(
   var apiPortText by remember { mutableStateOf("1984") }
   var rtspPortText by remember { mutableStateOf("8554") }
 
+  var sourceType by remember { mutableStateOf(Go2RtcBridgeSourceType.ESEECLOUD) }
+
+  // EseeCloud NVR state
   var nvrIp by remember { mutableStateOf(initialNvrIp) }
   var nvrBubblePort by remember { mutableIntStateOf(80) }
   var username by remember { mutableStateOf("admin") }
@@ -1935,12 +2560,69 @@ private fun Go2RtcBridgeDialog(
   var selectedChannels by remember { mutableStateOf(listOf(0, 1, 2, 3)) }
   var streamQuality by remember { mutableIntStateOf(1) } // 1 = Sub-stream, 0 = Main HD
 
+  // Tuya / SmartLife state
+  var tuyaTargetSlot by remember { mutableIntStateOf(0) }
+  var tuyaStreamName by remember { mutableStateOf("smartlife_1") }
+  var tuyaRegion by remember { mutableStateOf(TuyaRegion.EU) }
+  var tuyaAuthMode by remember { mutableStateOf(TuyaAuthMode.CLOUD_OPENAPI) }
+  var tuyaDeviceId by remember { mutableStateOf("") }
+  var tuyaEmail by remember { mutableStateOf("") }
+  var tuyaPassword by remember { mutableStateOf("") }
+  var tuyaUid by remember { mutableStateOf("") }
+  var tuyaClientId by remember { mutableStateOf("") }
+  var tuyaClientSecret by remember { mutableStateOf("") }
+  var tuyaUseSubStream by remember { mutableStateOf(true) }
+
   var isWorking by remember { mutableStateOf(false) }
   var feedbackMsg by remember { mutableStateOf<String?>(null) }
   var feedbackSuccess by remember { mutableStateOf(false) }
 
   val apiPort = apiPortText.toIntOrNull() ?: 1984
   val rtspPort = rtspPortText.toIntOrNull() ?: 8554
+
+  fun buildActiveYaml(): String =
+    when (sourceType) {
+      Go2RtcBridgeSourceType.ESEECLOUD ->
+        Go2RtcClient.buildEseeCloudGo2RtcYaml(
+          nvrIp = nvrIp,
+          nvrPort = nvrBubblePort,
+          username = username,
+          password = password,
+          channelsZeroBased = selectedChannels,
+          streamQualityIndex = streamQuality,
+          apiPort = apiPort,
+          rtspPort = rtspPort,
+        )
+      Go2RtcBridgeSourceType.TUYA_SMARTLIFE ->
+        Go2RtcClient.buildTuyaGo2RtcYaml(
+          streamName = tuyaStreamName,
+          region = tuyaRegion,
+          authMode = tuyaAuthMode,
+          deviceId = tuyaDeviceId,
+          email = tuyaEmail,
+          password = tuyaPassword,
+          uid = tuyaUid,
+          clientId = tuyaClientId,
+          clientSecret = tuyaClientSecret,
+          useSubStream = tuyaUseSubStream,
+          apiPort = apiPort,
+          rtspPort = rtspPort,
+        )
+    }
+
+  val isPushEnabled =
+    when (sourceType) {
+      Go2RtcBridgeSourceType.ESEECLOUD ->
+        !isWorking && nvrIp.isNotBlank() && selectedChannels.isNotEmpty()
+      Go2RtcBridgeSourceType.TUYA_SMARTLIFE ->
+        !isWorking &&
+          tuyaDeviceId.isNotBlank() &&
+          if (tuyaAuthMode == TuyaAuthMode.CLOUD_OPENAPI) {
+            tuyaUid.isNotBlank() && tuyaClientId.isNotBlank() && tuyaClientSecret.isNotBlank()
+          } else {
+            tuyaEmail.isNotBlank() && tuyaPassword.isNotBlank()
+          }
+    }
 
   fun toggleChannel(ch: Int) {
     onUserActivity()
@@ -1969,8 +2651,10 @@ private fun Go2RtcBridgeDialog(
   ) {
     Surface(
       modifier =
-        Modifier.fillMaxWidth(0.88f)
-          .fillMaxHeight(0.86f)
+        Modifier.fillMaxWidth(0.95f)
+          .widthIn(max = 920.dp)
+          .fillMaxHeight(0.92f)
+          .heightIn(max = 580.dp)
           .imePadding()
           .pointerInput(Unit) {
             awaitPointerEventScope {
@@ -2001,13 +2685,23 @@ private fun Go2RtcBridgeDialog(
               color = DashTextPrimary,
             )
             Text(
-              tr(
-                lang,
-                "Převádí nativní protokol EseeCloud bubble:// do RTSP pro CamPanel",
-                "Bridges native EseeCloud bubble:// protocol to RTSP for CamPanel",
-              ),
+              if (sourceType == Go2RtcBridgeSourceType.ESEECLOUD) {
+                tr(
+                  lang,
+                  "Převádí nativní protokol EseeCloud bubble:// do RTSP pro CamPanel",
+                  "Bridges native EseeCloud bubble:// protocol to RTSP for CamPanel",
+                )
+              } else {
+                tr(
+                  lang,
+                  "Převádí kamery Tuya / SmartLife (tuya://) na lokální RTSP (vyžaduje go2rtc 1.9.13+)",
+                  "Bridges Tuya / SmartLife cameras (tuya://) to local RTSP (requires go2rtc 1.9.13+)",
+                )
+              },
               style = MaterialTheme.typography.labelSmall,
               color = DashTextSecondary,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
             )
           }
           IconButton(onClick = { if (!isWorking) onDismiss() }) {
@@ -2023,7 +2717,7 @@ private fun Go2RtcBridgeDialog(
           // LEFT PANE: go2rtc server address, stream import & Termux/YAML copy
           Column(
             modifier =
-              Modifier.weight(0.95f)
+              Modifier.weight(0.9f)
                 .fillMaxHeight()
                 .clip(RoundedCornerShape(10.dp))
                 .background(DashSurfaceElevated.copy(alpha = 0.6f))
@@ -2093,7 +2787,11 @@ private fun Go2RtcBridgeDialog(
             }
 
             Text(
-              tr(lang, "Spuštění v Termuxu na tomto telefonu:", "Run in Termux on this phone:"),
+              if (sourceType == Go2RtcBridgeSourceType.ESEECLOUD) {
+                tr(lang, "Spuštění v Termuxu (EseeCloud):", "Run in Termux (EseeCloud):")
+              } else {
+                tr(lang, "Spuštění v Termuxu (Tuya / SmartLife):", "Run in Termux (Tuya / SmartLife):")
+              },
               style = MaterialTheme.typography.labelSmall,
               color = DashTextSecondary,
             )
@@ -2102,17 +2800,7 @@ private fun Go2RtcBridgeDialog(
               OutlinedButton(
                 onClick = {
                   onUserActivity()
-                  val yaml =
-                    Go2RtcClient.buildEseeCloudGo2RtcYaml(
-                      nvrIp = nvrIp,
-                      nvrPort = nvrBubblePort,
-                      username = username,
-                      password = password,
-                      channelsZeroBased = selectedChannels,
-                      streamQualityIndex = streamQuality,
-                      apiPort = apiPort,
-                      rtspPort = rtspPort,
-                    )
+                  val yaml = buildActiveYaml()
                   copyToClipboard(
                     "termux_cmd",
                     Go2RtcClient.buildTermuxInstallCommand(yaml),
@@ -2132,20 +2820,9 @@ private fun Go2RtcBridgeDialog(
               OutlinedButton(
                 onClick = {
                   onUserActivity()
-                  val yaml =
-                    Go2RtcClient.buildEseeCloudGo2RtcYaml(
-                      nvrIp = nvrIp,
-                      nvrPort = nvrBubblePort,
-                      username = username,
-                      password = password,
-                      channelsZeroBased = selectedChannels,
-                      streamQualityIndex = streamQuality,
-                      apiPort = apiPort,
-                      rtspPort = rtspPort,
-                    )
                   copyToClipboard(
                     "go2rtc_yaml",
-                    yaml,
+                    buildActiveYaml(),
                     tr(
                       lang,
                       "Konfigurace go2rtc.yaml zkopírována do schránky.",
@@ -2162,10 +2839,10 @@ private fun Go2RtcBridgeDialog(
             }
           }
 
-          // RIGHT PANE: EseeCloud NVR parameters & batch/individual channel selection
+          // RIGHT PANE: Source selector (EseeCloud vs Tuya/SmartLife) + Source Parameters
           Column(
             modifier =
-              Modifier.weight(1.05f)
+              Modifier.weight(1.1f)
                 .fillMaxHeight()
                 .clip(RoundedCornerShape(10.dp))
                 .background(DashSurfaceElevated.copy(alpha = 0.6f))
@@ -2174,115 +2851,368 @@ private fun Go2RtcBridgeDialog(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp),
           ) {
-            Text(
-              tr(lang, "2. Parametry NVR EseeCloud (bubble://)", "2. EseeCloud NVR settings (bubble://)"),
-              style = MaterialTheme.typography.labelMedium,
-              color = DashTextPrimary,
-              fontWeight = FontWeight.SemiBold,
-            )
-
-            OutlinedTextField(
-              value = nvrIp,
-              onValueChange = {
-                onUserActivity()
-                nvrIp = it
-              },
-              label = { Text(tr(lang, "Místní IP adresa NVR", "Local NVR IP address")) },
-              placeholder = { Text("192.168.1.50") },
-              singleLine = true,
-              colors = textFieldColors(),
-              modifier = Modifier.fillMaxWidth(),
-            )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-              OutlinedTextField(
-                value = username,
-                onValueChange = {
-                  onUserActivity()
-                  username = it
-                },
-                label = { Text(tr(lang, "Jméno NVR", "NVR username")) },
-                singleLine = true,
-                colors = textFieldColors(),
-                modifier = Modifier.weight(1f),
-              )
-              OutlinedTextField(
-                value = password,
-                onValueChange = {
-                  onUserActivity()
-                  password = it
-                },
-                label = { Text(tr(lang, "Heslo NVR", "NVR password")) },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                colors = textFieldColors(),
-                modifier = Modifier.weight(1f),
-              )
-            }
-
             Row(
               modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
               verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(6.dp),
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-              Text("Port:", style = MaterialTheme.typography.labelSmall, color = DashTextSecondary)
-              listOf(80, 10000, 8080).forEach { p ->
-                FilterChip(
-                  selected = nvrBubblePort == p,
-                  onClick = {
+              FilterChip(
+                selected = sourceType == Go2RtcBridgeSourceType.ESEECLOUD,
+                onClick = {
+                  onUserActivity()
+                  sourceType = Go2RtcBridgeSourceType.ESEECLOUD
+                  feedbackMsg = null
+                },
+                label = { Text("EseeCloud (bubble://)", style = MaterialTheme.typography.labelSmall) },
+                colors =
+                  FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = palette.accent,
+                    selectedLabelColor = Color.White,
+                  ),
+                modifier = Modifier.height(48.dp).testTag("go2rtc_mode_eseecloud"),
+              )
+              FilterChip(
+                selected = sourceType == Go2RtcBridgeSourceType.TUYA_SMARTLIFE,
+                onClick = {
+                  onUserActivity()
+                  sourceType = Go2RtcBridgeSourceType.TUYA_SMARTLIFE
+                  feedbackMsg = null
+                },
+                label = { Text("Tuya / SmartLife", style = MaterialTheme.typography.labelSmall) },
+                colors =
+                  FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = palette.accent,
+                    selectedLabelColor = Color.White,
+                  ),
+                modifier = Modifier.height(48.dp).testTag("go2rtc_mode_tuya"),
+              )
+            }
+
+            if (sourceType == Go2RtcBridgeSourceType.ESEECLOUD) {
+              Text(
+                tr(lang, "2. Parametry NVR EseeCloud (bubble://)", "2. EseeCloud NVR settings (bubble://)"),
+                style = MaterialTheme.typography.labelMedium,
+                color = DashTextPrimary,
+                fontWeight = FontWeight.SemiBold,
+              )
+
+              OutlinedTextField(
+                value = nvrIp,
+                onValueChange = {
+                  onUserActivity()
+                  nvrIp = it
+                },
+                label = { Text(tr(lang, "Místní IP adresa NVR", "Local NVR IP address")) },
+                placeholder = { Text("192.168.1.50") },
+                singleLine = true,
+                colors = textFieldColors(),
+                modifier = Modifier.fillMaxWidth(),
+              )
+
+              Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                  value = username,
+                  onValueChange = {
                     onUserActivity()
-                    nvrBubblePort = p
+                    username = it
                   },
-                  label = { Text("$p", style = MaterialTheme.typography.labelSmall) },
+                  label = { Text(tr(lang, "Jméno NVR", "NVR username")) },
+                  singleLine = true,
+                  colors = textFieldColors(),
+                  modifier = Modifier.weight(1f),
+                )
+                OutlinedTextField(
+                  value = password,
+                  onValueChange = {
+                    onUserActivity()
+                    password = it
+                  },
+                  label = { Text(tr(lang, "Heslo NVR", "NVR password")) },
+                  singleLine = true,
+                  visualTransformation = PasswordVisualTransformation(),
+                  colors = textFieldColors(),
+                  modifier = Modifier.weight(1f),
                 )
               }
-              FilterChip(
-                selected = streamQuality == 1,
-                onClick = {
-                  onUserActivity()
-                  streamQuality = if (streamQuality == 1) 0 else 1
-                },
-                label = {
-                  Text(
-                    if (streamQuality == 1) tr(lang, "Sub (rychlý)", "Sub (fast)") else "Main HD",
-                    style = MaterialTheme.typography.labelSmall,
-                  )
-                },
-              )
-            }
 
-            Row(
-              modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-              FilterChip(
-                selected = selectedChannels == listOf(0, 1, 2, 3),
-                onClick = {
-                  onUserActivity()
-                  selectedChannels = listOf(0, 1, 2, 3)
-                },
-                label = { Text("K1–4", style = MaterialTheme.typography.labelSmall) },
-              )
-              FilterChip(
-                selected = selectedChannels == listOf(4, 5, 6, 7),
-                onClick = {
-                  onUserActivity()
-                  selectedChannels = listOf(4, 5, 6, 7)
-                },
-                label = { Text("K5–8", style = MaterialTheme.typography.labelSmall) },
-              )
-              (0..7).forEach { ch ->
-                val isSelected = ch in selectedChannels
+              Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                Text("Port:", style = MaterialTheme.typography.labelSmall, color = DashTextSecondary)
+                listOf(80, 10000, 8080).forEach { p ->
+                  FilterChip(
+                    selected = nvrBubblePort == p,
+                    onClick = {
+                      onUserActivity()
+                      nvrBubblePort = p
+                    },
+                    label = { Text("$p", style = MaterialTheme.typography.labelSmall) },
+                  )
+                }
                 FilterChip(
-                  selected = isSelected,
-                  onClick = { toggleChannel(ch) },
-                  label = { Text("K${ch + 1}", style = MaterialTheme.typography.labelSmall) },
+                  selected = streamQuality == 1,
+                  onClick = {
+                    onUserActivity()
+                    streamQuality = if (streamQuality == 1) 0 else 1
+                  },
+                  label = {
+                    Text(
+                      if (streamQuality == 1) tr(lang, "Sub (rychlý)", "Sub (fast)") else "Main HD",
+                      style = MaterialTheme.typography.labelSmall,
+                    )
+                  },
+                )
+              }
+
+              Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                FilterChip(
+                  selected = selectedChannels == listOf(0, 1, 2, 3),
+                  onClick = {
+                    onUserActivity()
+                    selectedChannels = listOf(0, 1, 2, 3)
+                  },
+                  label = { Text("K1–4", style = MaterialTheme.typography.labelSmall) },
+                )
+                FilterChip(
+                  selected = selectedChannels == listOf(4, 5, 6, 7),
+                  onClick = {
+                    onUserActivity()
+                    selectedChannels = listOf(4, 5, 6, 7)
+                  },
+                  label = { Text("K5–8", style = MaterialTheme.typography.labelSmall) },
+                )
+                (0..7).forEach { ch ->
+                  val isSelected = ch in selectedChannels
+                  FilterChip(
+                    selected = isSelected,
+                    onClick = { toggleChannel(ch) },
+                    label = { Text("K${ch + 1}", style = MaterialTheme.typography.labelSmall) },
+                    colors =
+                      FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = palette.accent,
+                        selectedLabelColor = Color.White,
+                      ),
+                  )
+                }
+              }
+            } else {
+              // TUYA / SMARTLIFE BRIDGE FORM
+              Text(
+                tr(lang, "2. Parametry kamery Tuya / SmartLife", "2. Tuya / SmartLife camera settings"),
+                style = MaterialTheme.typography.labelMedium,
+                color = DashTextPrimary,
+                fontWeight = FontWeight.SemiBold,
+              )
+
+              // Target slot K1..K4 + Region + Stream quality
+              Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                Text(tr(lang, "Pozice:", "Slot:"), style = MaterialTheme.typography.labelSmall, color = DashTextSecondary)
+                (0..3).forEach { idx ->
+                  FilterChip(
+                    selected = tuyaTargetSlot == idx,
+                    onClick = {
+                      onUserActivity()
+                      tuyaTargetSlot = idx
+                      if (tuyaStreamName.startsWith("smartlife_")) {
+                        tuyaStreamName = "smartlife_${idx + 1}"
+                      }
+                    },
+                    label = { Text("K${idx + 1}", style = MaterialTheme.typography.labelSmall) },
+                    colors =
+                      FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = palette.accent,
+                        selectedLabelColor = Color.White,
+                      ),
+                  )
+                }
+                TuyaRegion.entries.forEach { reg ->
+                  FilterChip(
+                    selected = tuyaRegion == reg,
+                    onClick = {
+                      onUserActivity()
+                      tuyaRegion = reg
+                    },
+                    label = { Text(reg.shortLabel, style = MaterialTheme.typography.labelSmall) },
+                  )
+                }
+                FilterChip(
+                  selected = tuyaUseSubStream,
+                  onClick = {
+                    onUserActivity()
+                    tuyaUseSubStream = !tuyaUseSubStream
+                  },
+                  label = {
+                    Text(
+                      if (tuyaUseSubStream) "Sub SD" else "Main HD",
+                      style = MaterialTheme.typography.labelSmall,
+                    )
+                  },
+                )
+              }
+
+              // Auth mode selector: OpenAPI (works with SmartLife) vs Tuya Smart app login
+              Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                FilterChip(
+                  selected = tuyaAuthMode == TuyaAuthMode.CLOUD_OPENAPI,
+                  onClick = {
+                    onUserActivity()
+                    tuyaAuthMode = TuyaAuthMode.CLOUD_OPENAPI
+                  },
+                  label = {
+                    Text(
+                      tr(lang, "Tuya Cloud API (SmartLife)", "Tuya Cloud API (SmartLife)"),
+                      style = MaterialTheme.typography.labelSmall,
+                    )
+                  },
                   colors =
                     FilterChipDefaults.filterChipColors(
                       selectedContainerColor = palette.accent,
                       selectedLabelColor = Color.White,
                     ),
+                )
+                FilterChip(
+                  selected = tuyaAuthMode == TuyaAuthMode.APP_ACCOUNT,
+                  onClick = {
+                    onUserActivity()
+                    tuyaAuthMode = TuyaAuthMode.APP_ACCOUNT
+                  },
+                  label = {
+                    Text(
+                      tr(lang, "Účet Tuya Smart", "Tuya Smart account"),
+                      style = MaterialTheme.typography.labelSmall,
+                    )
+                  },
+                  colors =
+                    FilterChipDefaults.filterChipColors(
+                      selectedContainerColor = palette.accent,
+                      selectedLabelColor = Color.White,
+                    ),
+                )
+              }
+
+              Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                  value = tuyaDeviceId,
+                  onValueChange = {
+                    onUserActivity()
+                    tuyaDeviceId = it
+                  },
+                  label = { Text("Device ID") },
+                  placeholder = { Text("bf123456...") },
+                  singleLine = true,
+                  colors = textFieldColors(),
+                  modifier = Modifier.weight(1.3f).testTag("tuya_device_id_input"),
+                )
+                OutlinedTextField(
+                  value = tuyaStreamName,
+                  onValueChange = {
+                    onUserActivity()
+                    tuyaStreamName = it
+                  },
+                  label = { Text(tr(lang, "Název streamu", "Stream name")) },
+                  placeholder = { Text("smartlife_1") },
+                  singleLine = true,
+                  colors = textFieldColors(),
+                  modifier = Modifier.weight(1f),
+                )
+              }
+
+              if (tuyaAuthMode == TuyaAuthMode.CLOUD_OPENAPI) {
+                OutlinedTextField(
+                  value = tuyaUid,
+                  onValueChange = {
+                    onUserActivity()
+                    tuyaUid = it
+                  },
+                  label = { Text("Tuya UID") },
+                  placeholder = { Text("eu169...") },
+                  singleLine = true,
+                  colors = textFieldColors(),
+                  modifier = Modifier.fillMaxWidth().testTag("tuya_uid_input"),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                  OutlinedTextField(
+                    value = tuyaClientId,
+                    onValueChange = {
+                      onUserActivity()
+                      tuyaClientId = it
+                    },
+                    label = { Text("Client ID") },
+                    singleLine = true,
+                    colors = textFieldColors(),
+                    modifier = Modifier.weight(1f).testTag("tuya_client_id_input"),
+                  )
+                  OutlinedTextField(
+                    value = tuyaClientSecret,
+                    onValueChange = {
+                      onUserActivity()
+                      tuyaClientSecret = it
+                    },
+                    label = { Text("Client Secret") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    colors = textFieldColors(),
+                    modifier = Modifier.weight(1f).testTag("tuya_client_secret_input"),
+                  )
+                }
+                Text(
+                  text =
+                    tr(
+                      lang,
+                      "Device ID najdete v SmartLife → Nastavení kamery → Informace o zařízení. UID, Client ID a Secret z iot.tuya.com.",
+                      "Find Device ID in SmartLife → Camera Settings → Device Info. UID, Client ID & Secret from iot.tuya.com.",
+                    ),
+                  style = MaterialTheme.typography.labelSmall,
+                  color = DashTextMuted,
+                )
+              } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                  OutlinedTextField(
+                    value = tuyaEmail,
+                    onValueChange = {
+                      onUserActivity()
+                      tuyaEmail = it
+                    },
+                    label = { Text(tr(lang, "E-mail (Tuya Smart)", "Email (Tuya Smart)")) },
+                    singleLine = true,
+                    colors = textFieldColors(),
+                    modifier = Modifier.weight(1f).testTag("tuya_email_input"),
+                  )
+                  OutlinedTextField(
+                    value = tuyaPassword,
+                    onValueChange = {
+                      onUserActivity()
+                      tuyaPassword = it
+                    },
+                    label = { Text(tr(lang, "Heslo", "Password")) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    colors = textFieldColors(),
+                    modifier = Modifier.weight(1f).testTag("tuya_password_input"),
+                  )
+                }
+                Text(
+                  text =
+                    tr(
+                      lang,
+                      "Pozn.: Přímé přihlášení e-mailem v go2rtc vyžaduje účet Tuya Smart (pro SmartLife použijte Tuya Cloud API).",
+                      "Note: Direct email login in go2rtc requires a Tuya Smart account (for SmartLife use Tuya Cloud API).",
+                    ),
+                  style = MaterialTheme.typography.labelSmall,
+                  color = DashTextMuted,
                 )
               }
             }
@@ -2328,24 +3258,48 @@ private fun Go2RtcBridgeDialog(
                 onUserActivity()
                 isWorking = true
                 feedbackMsg = null
-                onRegisterEseeCloud(
-                  goHost,
-                  apiPort,
-                  rtspPort,
-                  nvrIp,
-                  nvrBubblePort,
-                  username,
-                  password,
-                  selectedChannels,
-                  streamQuality,
-                ) { ok, msg ->
-                  isWorking = false
-                  feedbackSuccess = ok
-                  feedbackMsg = msg
-                  if (ok) onDismiss()
+                if (sourceType == Go2RtcBridgeSourceType.ESEECLOUD) {
+                  onRegisterEseeCloud(
+                    goHost,
+                    apiPort,
+                    rtspPort,
+                    nvrIp,
+                    nvrBubblePort,
+                    username,
+                    password,
+                    selectedChannels,
+                    streamQuality,
+                  ) { ok, msg ->
+                    isWorking = false
+                    feedbackSuccess = ok
+                    feedbackMsg = msg
+                    if (ok) onDismiss()
+                  }
+                } else {
+                  onRegisterTuya(
+                    goHost,
+                    apiPort,
+                    rtspPort,
+                    tuyaTargetSlot,
+                    tuyaStreamName,
+                    tuyaRegion,
+                    tuyaAuthMode,
+                    tuyaDeviceId,
+                    tuyaEmail,
+                    tuyaPassword,
+                    tuyaUid,
+                    tuyaClientId,
+                    tuyaClientSecret,
+                    tuyaUseSubStream,
+                  ) { ok, msg ->
+                    isWorking = false
+                    feedbackSuccess = ok
+                    feedbackMsg = msg
+                    if (ok) onDismiss()
+                  }
                 }
               },
-              enabled = !isWorking && nvrIp.isNotBlank() && selectedChannels.isNotEmpty(),
+              enabled = isPushEnabled,
               colors = ButtonDefaults.buttonColors(containerColor = MenuBlue),
               modifier = Modifier.height(48.dp).testTag("go2rtc_register_button"),
             ) {

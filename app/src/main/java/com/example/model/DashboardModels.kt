@@ -12,9 +12,22 @@ data class CameraSlot(
   val password: String = "",
   val onvifDeviceAddress: String = "",
   val protocolLabel: String = "RTSP",
+  val recordingEnabled: Boolean = false,
+  val recordingQualityId: String = RecordingQuality.SD.id,
+  val recordingMaxSizeMb: Int = 2048,
+  val recordingRetentionDays: Int = 7,
+  val recordingModeId: String = RecordingMode.CONTINUOUS.id,
+  val motionSensitivity: Int = 50,
+  val motionEventDurationMinutes: Int = 2,
 ) {
   val isConfigured: Boolean
     get() = streamUrl.isNotBlank()
+
+  val recordingQuality: RecordingQuality
+    get() = RecordingQuality.fromId(recordingQualityId)
+
+  val recordingMode: RecordingMode
+    get() = RecordingMode.fromId(recordingModeId)
 
   /**
    * Builds the effective playback URL, injecting RTSP Basic/Digest credentials if provided and not
@@ -94,13 +107,55 @@ data class CameraSlot(
       portText: String = DEFAULT_MANUAL_RTSP_PORT.toString(),
       path: String = DEFAULT_MANUAL_RTSP_PATH,
       isHttp: Boolean = false,
+      useHttps: Boolean = false,
     ): String {
       val cleanIp = ipAddress.trim()
       if (cleanIp.isEmpty()) return ""
-      val cleanPort = portText.trim().toIntOrNull()?.takeIf { it in 1..65535 } ?: DEFAULT_MANUAL_RTSP_PORT
-      val normalizedPath = if (path.startsWith("/")) path else "/$path"
-      val scheme = if (isHttp) "http" else "rtsp"
+      val defaultPort = if (useHttps) 443 else DEFAULT_MANUAL_RTSP_PORT
+      val cleanPort = portText.trim().toIntOrNull()?.takeIf { it in 1..65535 } ?: defaultPort
+      val normalizedPath =
+        if (path.isBlank()) "/"
+        else if (path.startsWith("/")) path else "/$path"
+      val scheme =
+        when {
+          useHttps -> "https"
+          isHttp -> "http"
+          else -> "rtsp"
+        }
       return "$scheme://$cleanIp:$cleanPort$normalizedPath"
+    }
+
+    fun normalizeManualUrl(
+      rawInput: String,
+      defaultIsHttp: Boolean = false,
+      useHttps: Boolean = false,
+    ): String {
+      val trimmed = rawInput.trim()
+      if (trimmed.isEmpty()) return ""
+      if (Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://").containsMatchIn(trimmed)) {
+        return trimmed
+      }
+      val scheme =
+        when {
+          useHttps -> "https://"
+          defaultIsHttp -> "http://"
+          else -> "rtsp://"
+        }
+      return "$scheme$trimmed"
+    }
+
+    fun isHttpVideoOrMjpegUrl(url: String): Boolean {
+      val lower = url.trim().lowercase(java.util.Locale.ROOT)
+      if (!lower.startsWith("http://") && !lower.startsWith("https://")) return false
+      return lower.contains("/livestream/") ||
+        lower.contains(".m3u8") ||
+        lower.contains(".ts") ||
+        lower.contains(".mp4") ||
+        lower.contains(".mjpg") ||
+        lower.contains("/mjpeg") ||
+        lower.contains("/video") ||
+        lower.contains("videostream") ||
+        lower.contains("action=stream")
     }
 
     fun extractChannelZeroBased(streamUrl: String, defaultChannel: Int = 0): Int {
@@ -229,6 +284,7 @@ data class RtspPathPreset(
   val label: String,
   val path: String,
   val isHttp: Boolean = false,
+  val defaultPort: Int? = null,
 ) {
   companion object {
     val CommonPresets =
@@ -242,7 +298,18 @@ data class RtspPathPreset(
         RtspPathPreset("Hikvision", "/Streaming/Channels/101"),
         RtspPathPreset("Reolink", "/h264Preview_01_sub"),
         RtspPathPreset("Xiaomi / Dafang", "/unicast"),
-        RtspPathPreset("ESP32-CAM", "/capture", isHttp = true),
+      )
+
+    val IpCameraPresets =
+      listOf(
+        RtspPathPreset("IP Webcam (/video)", "/video", isHttp = true, defaultPort = 8080),
+        RtspPathPreset("IP Webcam (/shot.jpg)", "/shot.jpg", isHttp = true, defaultPort = 8080),
+        RtspPathPreset("MJPEG (/mjpeg)", "/mjpeg", isHttp = true, defaultPort = 80),
+        RtspPathPreset("MJPEG (/mjpg/video.mjpg)", "/mjpg/video.mjpg", isHttp = true, defaultPort = 80),
+        RtspPathPreset("Snapshot (/snapshot.jpg)", "/snapshot.jpg", isHttp = true, defaultPort = 80),
+        RtspPathPreset("ESP32-CAM (/capture)", "/capture", isHttp = true, defaultPort = 81),
+        RtspPathPreset("EseeCloud (HTTP)", "/cgi-bin/snapshot.cgi?chn=0&u=admin&p=", isHttp = true, defaultPort = 80),
+        RtspPathPreset("HLS (/stream.m3u8)", "/stream.m3u8", isHttp = true, defaultPort = 80),
       )
   }
 }
@@ -653,6 +720,366 @@ object DisplayBrightnessMath {
       return luxToScreenBrightness(ambientLux) to false
     }
     return BRIGHTNESS_SYSTEM_DEFAULT to false
+  }
+}
+
+enum class RecordingQuality(
+  val id: String,
+  val labelCs: String,
+  val labelEn: String,
+  val targetWidth: Int,
+  val targetHeight: Int,
+  val targetBitrateBps: Int,
+  val targetFps: Int,
+  val estimatedMbPer15Min: Int,
+) {
+  SD(
+    id = "sd",
+    labelCs = "SD (úsporné)",
+    labelEn = "SD (compact)",
+    targetWidth = 640,
+    targetHeight = 360,
+    targetBitrateBps = 420_000,
+    targetFps = 10,
+    estimatedMbPer15Min = 47,
+  ),
+  HD(
+    id = "hd",
+    labelCs = "HD (vysoké)",
+    labelEn = "HD (high)",
+    targetWidth = 1280,
+    targetHeight = 720,
+    targetBitrateBps = 1_300_000,
+    targetFps = 15,
+    estimatedMbPer15Min = 146,
+  );
+
+  fun labelFor(language: AppLanguage): String =
+    if (language == AppLanguage.EN) labelEn else labelCs
+
+  companion object {
+    fun fromId(id: String?): RecordingQuality =
+      entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: SD
+  }
+}
+
+enum class RecordingStorageLocation(
+  val id: String,
+  val labelCs: String,
+  val labelEn: String,
+) {
+  UNSET(
+    id = "",
+    labelCs = "Složka není vybrána",
+    labelEn = "No folder selected",
+  ),
+  APP_INTERNAL(
+    id = "app_internal",
+    labelCs = "Místní úložiště",
+    labelEn = "Local storage",
+  ),
+  APP_EXTERNAL_PRIMARY(
+    id = "app_external",
+    labelCs = "Místní úložiště",
+    labelEn = "Local storage",
+  ),
+  SD_CARD_APP(
+    id = "sd_card",
+    labelCs = "Externí úložiště (karta SD)",
+    labelEn = "External storage (SD card)",
+  ),
+  CUSTOM_SAF_TREE(
+    id = "custom_saf",
+    labelCs = "Externí úložiště (karta SD)",
+    labelEn = "External storage (SD card)",
+  );
+
+  fun labelFor(language: AppLanguage): String =
+    if (language == AppLanguage.EN) labelEn else labelCs
+
+  companion object {
+    fun fromId(id: String?): RecordingStorageLocation =
+      when {
+        id.equals(APP_EXTERNAL_PRIMARY.id, ignoreCase = true) ||
+          id.equals(APP_INTERNAL.id, ignoreCase = true) -> APP_EXTERNAL_PRIMARY
+        id.equals(SD_CARD_APP.id, ignoreCase = true) ||
+          id.equals(CUSTOM_SAF_TREE.id, ignoreCase = true) -> SD_CARD_APP
+        else -> UNSET
+      }
+  }
+}
+
+data class RecordingStorageSettings(
+  val locationTypeId: String = RecordingStorageLocation.UNSET.id,
+  val customTreeUri: String = "",
+  val customFolderLabel: String = "",
+) {
+  val locationType: RecordingStorageLocation
+    get() = RecordingStorageLocation.fromId(locationTypeId)
+
+  val isFolderConfigured: Boolean
+    get() = customTreeUri.isNotBlank() && locationType != RecordingStorageLocation.UNSET
+}
+
+data class RecordedSegmentInfo(
+  val id: String,
+  val slotIndex: Int,
+  val fileName: String,
+  val uriString: String,
+  val filePath: String? = null,
+  val sizeBytes: Long = 0L,
+  val createdAtMs: Long = 0L,
+  val qualityId: String = RecordingQuality.SD.id,
+  val isCustomSaf: Boolean = false,
+  val isCurrentlyRecording: Boolean = false,
+)
+
+enum class RecordingMode(
+  val id: String,
+  val labelCs: String,
+  val labelEn: String,
+) {
+  CONTINUOUS(
+    id = "continuous",
+    labelCs = "Kontinuální (15 min)",
+    labelEn = "Continuous (15 min)",
+  ),
+  MOTION_EVENTS(
+    id = "motion",
+    labelCs = "Pouze při pohybu",
+    labelEn = "Motion events only",
+  );
+
+  fun labelFor(language: AppLanguage): String =
+    if (language == AppLanguage.EN) labelEn else labelCs
+
+  companion object {
+    fun fromId(id: String?): RecordingMode =
+      entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: CONTINUOUS
+  }
+}
+
+data class CameraRecordingRuntimeStatus(
+  val slotIndex: Int,
+  val isRecording: Boolean = false,
+  val isMotionArmed: Boolean = false,
+  val isMotionTriggered: Boolean = false,
+  val activeFileName: String? = null,
+  val activeSegmentStartedMs: Long = 0L,
+  val usedBytes: Long = 0L,
+  val segmentCount: Int = 0,
+  val lastError: String? = null,
+)
+
+data class RecordingStorageStats(
+  val usedByAppBytes: Long = 0L,
+  val availableFreeBytes: Long = 0L,
+  val totalDeviceBytes: Long = 0L,
+  val resolvedPathLabel: String = "",
+  val hasSdCard: Boolean = false,
+)
+
+object RecordingRetentionPolicy {
+  const val SEGMENT_DURATION_MS = 15L * 60L * 1000L // 15-minute segments
+  const val MIN_DISK_FREE_BYTES = 200L * 1024L * 1024L // keep 200 MB headroom on filesystem
+  val RETENTION_DAY_OPTIONS = listOf(1, 2, 5, 7, 14)
+  val MAX_SIZE_MB_OPTIONS = listOf(512, 1024, 2048, 5120, 10240, 20480, 51200)
+  val MOTION_DURATION_MINUTES_OPTIONS = listOf(1, 2, 5)
+  val MOTION_SENSITIVITY_PRESETS = listOf(25, 50, 75, 90)
+
+  fun normalizeRetentionDays(days: Int): Int =
+    RETENTION_DAY_OPTIONS.minByOrNull { kotlin.math.abs(it - days) } ?: 7
+
+  fun normalizeMotionDurationMinutes(minutes: Int): Int =
+    MOTION_DURATION_MINUTES_OPTIONS.minByOrNull { kotlin.math.abs(it - minutes) } ?: 2
+
+  fun normalizeMotionSensitivity(sensitivity: Int): Int =
+    sensitivity.coerceIn(10, 95)
+
+  fun normalizeMaxSizeMb(sizeMb: Int): Int =
+    sizeMb.coerceIn(256, 102_400)
+
+  fun formatSizeLabel(sizeMb: Int): String =
+    if (sizeMb >= 1024) {
+      val gb = sizeMb / 1024.0
+      if (kotlin.math.abs(gb - gb.toInt()) < 0.05) "${gb.toInt()} GB"
+      else String.format(java.util.Locale.US, "%.1f GB", gb)
+    } else {
+      "$sizeMb MB"
+    }
+
+  fun formatBytes(bytes: Long): String {
+    if (bytes < 1024L) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024.0) return String.format(java.util.Locale.US, "%.0f KB", kb)
+    val mb = kb / 1024.0
+    if (mb < 1024.0) return String.format(java.util.Locale.US, "%.1f MB", mb)
+    val gb = mb / 1024.0
+    return String.format(java.util.Locale.US, "%.2f GB", gb)
+  }
+
+  /**
+   * Builds compact, lexicographically sortable `.mp4` filename:
+   * - Continuous: `cam1_2026-11-26_08-15-00_sd.mp4`
+   * - Motion event: `cam1_2026-11-26_08-15-00_evt_sd.mp4`
+   */
+  fun buildSegmentFileName(
+    slotIndex: Int,
+    timestampMs: Long,
+    quality: RecordingQuality,
+    isMotionEvent: Boolean = false,
+  ): String {
+    val instant = java.time.Instant.ofEpochMilli(timestampMs)
+    val local = java.time.LocalDateTime.ofInstant(instant, java.time.ZoneId.systemDefault())
+    val stamp = local.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"))
+    val suffix = if (isMotionEvent) "evt_${quality.id}" else quality.id
+    return "cam${slotIndex + 1}_${stamp}_${suffix}.mp4"
+  }
+
+  fun isMotionEventFileName(fileName: String): Boolean =
+    fileName.contains("_evt_", ignoreCase = true)
+
+  fun parseSlotIndexFromFileName(fileName: String): Int? =
+    Regex("^cam(\\d+)_", RegexOption.IGNORE_CASE)
+      .find(fileName)
+      ?.groupValues
+      ?.getOrNull(1)
+      ?.toIntOrNull()
+      ?.let { (it - 1).takeIf { idx -> idx in 0..3 } }
+
+  fun parseQualityFromFileName(fileName: String): RecordingQuality =
+    if (fileName.contains("_hd.", ignoreCase = true)) RecordingQuality.HD else RecordingQuality.SD
+
+  /**
+   * Resolves the most storage-efficient stream URL for the requested recording quality.
+   * For RTSP dual-stream URLs (`/ch0_0.264`, `/live/ch00_0`, `subtype=0`, `/Streaming/Channels/101`),
+   * `SD` switches automatically to the lightweight sub-stream (`_1`, `subtype=1`, `102`) while
+   * `HD` selects the main high-resolution stream (`_0`, `subtype=0`, `101`).
+   */
+  fun resolveStreamUrlForQuality(slot: CameraSlot, quality: RecordingQuality): String {
+    val rawPlayback = slot.effectivePlaybackUrl()
+    if (rawPlayback.isBlank()) return ""
+    val lower = rawPlayback.lowercase(java.util.Locale.ROOT)
+    val isRtsp = lower.startsWith("rtsp://") || lower.startsWith("rtspt://")
+    if (!isRtsp) return rawPlayback
+
+    val targetQualityIdx = if (quality == RecordingQuality.SD) 1 else 0
+    val hasQualityPattern =
+      Regex("/(?:live/)?ch\\d+_\\d+").containsMatchIn(rawPlayback) ||
+        Regex("(?:subtype|stream)=\\d+").containsMatchIn(rawPlayback) ||
+        Regex("/Streaming/Channels/\\d+0[12]").containsMatchIn(rawPlayback)
+    if (!hasQualityPattern) return rawPlayback
+
+    val channelZeroBased = CameraSlot.extractChannelZeroBased(rawPlayback, slot.slotIndex)
+    val withChannel =
+      CameraSlot.applyChannelAndQuality(
+        streamUrl = rawPlayback,
+        fallbackIp = CameraSlot.extractHost(rawPlayback, slot.onvifDeviceAddress),
+        fallbackPort = CameraSlot.extractPort(rawPlayback),
+        channelZeroBased = channelZeroBased,
+        qualityIndex = targetQualityIdx,
+      )
+    // Preserve injected username:password credentials if present in rawPlayback
+    val credMatch = Regex("^(rtspt?://[^/@]+@)", RegexOption.IGNORE_CASE).find(rawPlayback)
+    return if (credMatch != null && !withChannel.contains("@")) {
+      withChannel.replaceFirst(Regex("^rtspt?://", RegexOption.IGNORE_CASE), credMatch.groupValues[1])
+    } else {
+      withChannel
+    }
+  }
+
+  /**
+   * Computes which finished recording files must be deleted (oldest-first) so that:
+   * 1) No recording older than [retentionDays] remains,
+   * 2) Total stored size for this camera stays within [maxStorageBytes] (leaving optional [reserveForNextSegmentBytes]),
+   * 3) Device free space stays above [minRequiredFreeBytes].
+   */
+  fun planFilesToDeleteForRingBuffer(
+    segments: List<RecordedSegmentInfo>,
+    maxStorageBytes: Long,
+    retentionDays: Int,
+    nowMs: Long,
+    reserveForNextSegmentBytes: Long = 0L,
+    availableFreeBytes: Long = Long.MAX_VALUE,
+    minRequiredFreeBytes: Long = MIN_DISK_FREE_BYTES,
+  ): List<RecordedSegmentInfo> {
+    val candidates =
+      segments
+        .filterNot { it.isCurrentlyRecording }
+        .sortedBy { it.createdAtMs }
+    if (candidates.isEmpty()) return emptyList()
+
+    val toDelete = mutableListOf<RecordedSegmentInfo>()
+    val remaining = candidates.toMutableList()
+    val cutoffMs = nowMs - retentionDays.coerceAtLeast(1) * 86_400_000L
+
+    // 1. Delete files older than retention window
+    val expired = remaining.filter { it.createdAtMs > 0L && it.createdAtMs < cutoffMs }
+    for (item in expired) {
+      toDelete += item
+      remaining.remove(item)
+    }
+
+    // 2. Enforce per-camera size quota (oldest overwritten first)
+    val effectiveLimit = (maxStorageBytes - reserveForNextSegmentBytes).coerceAtLeast(0L)
+    var currentTotal = remaining.sumOf { it.sizeBytes.coerceAtLeast(0L) }
+    while (remaining.isNotEmpty() && currentTotal > effectiveLimit) {
+      val oldest = remaining.removeAt(0)
+      toDelete += oldest
+      currentTotal -= oldest.sizeBytes.coerceAtLeast(0L)
+    }
+
+    // 3. Protect underlying filesystem from running completely out of free space
+    var simulatedFree = availableFreeBytes
+    while (remaining.isNotEmpty() && simulatedFree < minRequiredFreeBytes) {
+      val oldest = remaining.removeAt(0)
+      toDelete += oldest
+      simulatedFree += oldest.sizeBytes.coerceAtLeast(0L)
+    }
+
+    return toDelete
+  }
+}
+
+object MotionDetectionMath {
+  private const val PIXEL_LUMA_DELTA_THRESHOLD = 20
+
+  /**
+   * Maps user sensitivity [10..95] onto the percentage of changed luma blocks [0.8% .. 12.0%]
+   * required to trigger a motion recording event. Higher sensitivity -> lower threshold.
+   */
+  fun sensitivityToChangedPercentThreshold(sensitivity: Int): Float {
+    val clamped = sensitivity.coerceIn(10, 95)
+    val norm = (clamped - 10) / 85f
+    return 12.0f - norm * 10.8f
+  }
+
+  fun computeChangedPercent(
+    previousLuma: ByteArray,
+    currentLuma: ByteArray,
+    pixelDeltaThreshold: Int = PIXEL_LUMA_DELTA_THRESHOLD,
+  ): Float {
+    val count = minOf(previousLuma.size, currentLuma.size)
+    if (count <= 0) return 0f
+    var changed = 0
+    for (i in 0 until count) {
+      val a = previousLuma[i].toInt() and 0xFF
+      val b = currentLuma[i].toInt() and 0xFF
+      if (kotlin.math.abs(a - b) >= pixelDeltaThreshold) {
+        changed++
+      }
+    }
+    return (changed * 100f) / count.toFloat()
+  }
+
+  fun isMotionDetected(
+    previousLuma: ByteArray,
+    currentLuma: ByteArray,
+    sensitivity: Int,
+  ): Boolean {
+    val changedPct = computeChangedPercent(previousLuma, currentLuma)
+    val thresholdPct = sensitivityToChangedPercentThreshold(sensitivity)
+    return changedPct >= thresholdPct
   }
 }
 
